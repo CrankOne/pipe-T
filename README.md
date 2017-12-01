@@ -6,7 +6,7 @@ explainations here starting with few simple examples to explain a purpose.
 This example is pretty meaningless, but it demonstrates basic requirements to
 run a trivial pipeline:
 
-```
+```C++
 # include <pipet.tcc>
 
 void my_processor( int & msg ) {
@@ -33,7 +33,7 @@ int main( inst argc, char * argv[] ) {
 The next example demonstrates a `true` pipeline --- a conveyor of processors
 transforming given `MyMessage` instance.
 
-```
+```C++
 # include <pipet.tcc>
 
 struct MyMessage {
