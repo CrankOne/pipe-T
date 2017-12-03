@@ -20,47 +20,38 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-# include "manifold.tcc"
+# ifndef H_PIPE_T_EXCEPTION_H
+# define H_PIPE_T_EXCEPTION_H
 
-# define BOOST_TEST_NO_MAIN
-//# define BOOST_TEST_MODULE Data source with metadata
-# include <boost/test/unit_test.hpp>
+# include <stdexcept>
+
+# define PIPET_EMERGENCY_BUFLEN 256
+
+# define pipet_error( c, ... ) while(true){                         \
+    char bf[PIPET_EMERGENCY_BUFLEN];                                \
+    snprintf(bf, PIPET_EMERGENCY_BUFLEN, __VA_ARGS__ );             \
+    throw pipet::errors:: c (bf);}
 
 namespace pipet {
-namespace test {
+namespace errors {
 
-struct Message {
-    // ...
-};
-
-typedef pipet::Manifold<Message, int> TestingManifold;
-
-class ManifoldArbiter : public TestingManifold::IArbiter {
-protected:
-    virtual int _V_pop_result() override {
-        Parent::_reset_flags();
-    }
+class Uninitialized : public std::runtime_error {
 public:
-    typedef TestingManifold::IArbiter Parent;
-};
+    Uninitialized( const std::string & s ) : std::runtime_error(s) {}
+};  // class Uninitialized
 
-// ...
+class EmptyManifold : public std::runtime_error {
+public:
+    EmptyManifold( const std::string & s ) : std::runtime_error(s) {}
+};  // class EmptyManifold
 
-}  // namespace test
+class NotImplemented : public std::runtime_error {
+public:
+    NotImplemented( const std::string & s ) : std::runtime_error(s) {}
+};  // class NotImplemented
+
+}  // namespace errors
 }  // namespace pipet
 
-//
-// Test suite
-
-BOOST_AUTO_TEST_SUITE( Pipeline_suite )
-
-BOOST_AUTO_TEST_CASE( ManifoldPipelineTC ) {
-    pipet::test::ManifoldArbiter a;
-    pipet::test::TestingManifold mf(&a);
-    // ...
-}
-
-BOOST_AUTO_TEST_SUITE_END()
-
-
+# endif  // H_PIPE_T_EXCEPTION_H
 

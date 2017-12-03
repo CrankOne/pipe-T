@@ -20,7 +20,7 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-# include "analysis/pipeline/basic.tcc"
+# include "basic_pipeline.tcc"
 
 # include <string>
 
@@ -28,7 +28,7 @@
 //# define BOOST_TEST_MODULE Data source with metadata
 # include <boost/test/unit_test.hpp>
 
-namespace sV {
+namespace pipet {
 namespace test {
 
 // Prerequisites.
@@ -83,7 +83,7 @@ public:
 
 // Define pipeline type from template:
 
-typedef sV::PipelineTraits< Message
+typedef pipet::PipelineTraits< Message
                           , Processor
                           , int
                           , int > Traits;
@@ -145,7 +145,7 @@ public:
 };
 
 }  // namespace test
-}  // namespace sV
+}  // namespace pipet
 
 //
 // Test suite
@@ -153,21 +153,21 @@ public:
 BOOST_AUTO_TEST_SUITE( Pipeline_suite )
 
 BOOST_AUTO_TEST_CASE( LinearPipelineTC ) {
-    sV::test::Processor p1(0), p2(1), p3(2), p4(3);
+    pipet::test::Processor p1(0), p2(1), p3(2), p4(3);
 
-    sV::test::TestingArbiter ta;
-    sV::Pipeline<sV::test::Traits> ppl( &ta );
+    pipet::test::TestingArbiter ta;
+    pipet::Pipeline<pipet::test::Traits> ppl( &ta );
 
     ppl.push_back( &p1 );
     ppl.push_back( &p2 );
     ppl.push_back( &p3 );
     ppl.push_back( &p4 );
 
-    sV::test::TestingSource src;
+    pipet::test::TestingSource src;
 
     int n = ppl.process(src);
     BOOST_CHECK( 4 == n );  // shall be aborted on #4
-    n = ppl.process( sV::test::gSrcMsgs[0] );
+    n = ppl.process( pipet::test::gSrcMsgs[0] );
     BOOST_CHECK( 0 == n );
 
     BOOST_TEST_MESSAGE( "    ...basic pipeline processing passed." );
@@ -175,7 +175,7 @@ BOOST_AUTO_TEST_CASE( LinearPipelineTC ) {
     int idx1 = 0, idx2 = 0;
     for( const auto & h : ppl ) {
         for( auto nEv : h.processor().ids_history() ) {
-            BOOST_CHECK( sV::test::pIDS[idx1][idx2] == nEv );
+            BOOST_CHECK( pipet::test::pIDS[idx1][idx2] == nEv );
             ++idx2;
         }
         idx2 = 0;

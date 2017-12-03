@@ -122,7 +122,6 @@ struct ManifoldTraits : protected PipelineTraits< MessageT
     /// This IArbiter interface introduces additional is_fork_filled() method
     /// that returns true, if latest handler result raised the JUNCTION_DONE
     /// flag.
-    /// TODO: must become protected.
     struct IArbiter : public Parent::IArbiter {
     private:
         bool _doAbort
@@ -154,6 +153,7 @@ struct ManifoldTraits : protected PipelineTraits< MessageT
         bool do_skip() const { return _doSkip; }
         bool do_abort() const { return _doAbort; }
         friend class Manifold<Message, ManifoldResultT>;
+        friend class Pipeline<Self>;
     };  // class IArbiter
 };
 
@@ -204,14 +204,17 @@ public:
     /// Manifold overloads the source processing method to support fork/junction
     /// processing.
     virtual PipelineProcRes process( ISource & src ) override {
-        // Check if we actually have something to do
-        if( Chain::empty() ) {
-            emraise( badState
-                   , "No processors specified --- has nothing to do for "
-                     "manifold %p.\n"
-                   , this );
+        if( ! this->arbiter_ptr() ) {
+            pipet_error( Uninitialized, "Arbiter object pointer is not set for "
+                    "pipeline instance %p while process() was invoked.",
+                    this );
         }
         IArbiter & a = *(this->arbiter_ptr());
+        // Check if we actually have something to do
+        if( Chain::empty() ) {
+            pipet_error( EmptyManifold, "Manifold instance %p has no handlers set.",
+                    this );
+        }
         // The temporary sources stack keeping internal state. Has to be empty upon
         // finishing processing.
         std::stack< std::pair<ISource *, typename Chain::iterator> > sourcesStack;
@@ -263,26 +266,28 @@ public:
     /// Single message will be processed as a (temporary) messages source
     /// containing only one event.
     virtual PipelineProcRes process( Message & msg ) override {
-        return Self::process( SingularSource(msg) );
+        auto tSrc = SingularSource(msg);
+        auto res = Self::process( tSrc );
+        return res;
     }
 };  // class ForkProcessor
 
 
-template<MessageT>
+template<typename MessageT>
 class SubManifold : public Manifold< MessageT
                                    , aux::ManifoldProcessingResultFlags>
                   , public aux::iManifoldProcessor<MessageT> {
 public:
     typedef typename Manifold< MessageT
-                             , aux::ManifoldProcessingResultFlags> Traits;
-    class Arbiter : public IArbiter {
+                             , aux::ManifoldProcessingResultFlags>::Traits Traits;
+    class Arbiter : public Traits::IArbiter {
     protected:
         virtual aux::ManifoldProcessingResultFlags _V_pop_result() override {
-            _TODO_  // TODO
+            pipet_error( NotImplemented, "Function is not yet implemented." );  // TODO
         }
     };
 public:
-    virtual aux::ManifoldProcessingResultFlags operator()( Message & msg ) override {
+    virtual aux::ManifoldProcessingResultFlags operator()( MessageT & msg ) override {
         return this->process(msg);
     }
 };

@@ -20,47 +20,8 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-# include "manifold.tcc"
-
-# define BOOST_TEST_NO_MAIN
-//# define BOOST_TEST_MODULE Data source with metadata
+//# define BOOST_TEST_MODULE StromaV master test suite
+# define BOOST_TEST_MAIN
+# define BOOST_TEST_DYN_LINK
 # include <boost/test/unit_test.hpp>
-
-namespace pipet {
-namespace test {
-
-struct Message {
-    // ...
-};
-
-typedef pipet::Manifold<Message, int> TestingManifold;
-
-class ManifoldArbiter : public TestingManifold::IArbiter {
-protected:
-    virtual int _V_pop_result() override {
-        Parent::_reset_flags();
-    }
-public:
-    typedef TestingManifold::IArbiter Parent;
-};
-
-// ...
-
-}  // namespace test
-}  // namespace pipet
-
-//
-// Test suite
-
-BOOST_AUTO_TEST_SUITE( Pipeline_suite )
-
-BOOST_AUTO_TEST_CASE( ManifoldPipelineTC ) {
-    pipet::test::ManifoldArbiter a;
-    pipet::test::TestingManifold mf(&a);
-    // ...
-}
-
-BOOST_AUTO_TEST_SUITE_END()
-
-
 

@@ -23,8 +23,9 @@
 # ifndef H_PIPE_T_BASIC_PIPELINE_H
 # define H_PIPE_T_BASIC_PIPELINE_H
 
+# include "pipe-t-error.hpp"
+
 # include <vector>
-# include <goo/goo_exception.hpp>
 
 namespace pipet {
 
@@ -144,7 +145,7 @@ public:
     /// Run pipeline evaluation on source.
     virtual PipelineProcRes process( ISource & src ) {
         if( ! arbiter_ptr() ) {
-            emraise( badState, "Arbiter object pointer is not set for "
+            pipet_error( Uninitialized, "Arbiter object pointer is not set for "
                     "pipeline instance %p while process() was invoked.",
                     this );
         }
@@ -165,7 +166,7 @@ public:
     /// Run pipeline evaluation on single message.
     virtual PipelineProcRes process( Message & msg ) {
         if( ! arbiter_ptr() ) {
-            emraise( badState, "Arbiter object pointer is not set for "
+            pipet_error( Uninitialized, "Arbiter object pointer is not set for "
                     "pipeline instance %p while process() was invoked.",
                     this );
         }
