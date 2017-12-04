@@ -22,20 +22,18 @@ template front-end to utilize complex things like
 middleware attempt connecting these elaborated solutions and higher-leveled
 environments like Python/R/CINT.
 
-## Examples
+## Simple Examples
 
 Since pipe-T was designed with usage simplicity in mind, it involves a
 significant amount of template trickery and syntax sugar offered by recent C++
 standards. We will try now to describe all the stuff in a most natural way for
 libraries like that — with examples.
 
-### Simple Examples
-
 Despite these simplest examples are not practically useful, they demonstrates
 few basic concepts in a clearest way and may be necessary to got the idea of
 more elaborated ones.
 
-#### Single function
+### Single-function Handlers
 
 The simplest (but unlikely useful) usage example implies constructing a
 pipeline with a single handler for arithmetic message type. Type of handler
@@ -57,7 +55,7 @@ behind of this expressions.
 
 Full code of this example may be found at simplest.cpp file.
 
-#### Pipeline Discrimination
+### Pipeline Discrimination
 
 Just invoking the set of callables sequentially is usually not user wants when
 it comes to the data processing. Users usually desire to declare a special
@@ -112,4 +110,21 @@ At the first glance, for primitive linear pipeline introduction of such a class
 looks like an overkill, but we're rarely using the pipeline primitive directly.
 Instead, few pipelines are usually organised in a forking structure that here
 is called _manifold_.
+
+## Advanced Concepts
+
+Next topics are somewhat "strong side" of pipe-T lib, demonstrating its actual
+integration capabilities.
+
+### Handler Result Conversion
+
+Pipeline has to "understand" result returned by processing function (or
+functor) in order to decide, whether message propagation shall be continued or
+aborted. Moreover, the since pipe-T provides a generic message-iteration
+mechanism, so another possibility for the handling procedures must be to
+interrupt this iteration in some cases (e.g. search or look-up iteration,
+error handling, etc).
+
+...
+
 

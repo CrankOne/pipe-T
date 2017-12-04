@@ -20,8 +20,6 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-# if 0
-
 # include "manifold.tcc"
 
 # define BOOST_TEST_NO_MAIN
@@ -65,9 +63,10 @@ private:
     int _prevNum;
 public:
     OrderCheck() : _prevNum(0) {}
-    void operator()(Message & msg) {
+    bool operator()(Message & msg) {  // TODO: bool -> void
         BOOST_CHECK( msg.id - 1 == _prevNum );
         _prevNum = msg.id;
+        return true;  // XXX
     }
     int latest_id() const { return _prevNum; }
     void reset() { _prevNum = 0; }
@@ -111,6 +110,8 @@ class ManifoldArbiter : public TestingManifold::IArbiter {
 protected:
     virtual int _V_pop_result() override {
         Parent::_reset_flags();
+        // ?
+        return 0;
     }
 public:
     typedef TestingManifold::IArbiter Parent;
@@ -147,7 +148,7 @@ BOOST_AUTO_TEST_CASE( ManifoldPipelineTC ) {
     pipet::test::TestingManifold mf(&a);
 
     pipet::test::OrderCheck oc1, oc2;
-    pipet::test::ForkMimic fm1(3), fm(2);
+    pipet::test::ForkMimic fm1(3), fm2(2);
 
     mf.push_back( oc1 );
     mf.push_back( fm1 );
@@ -167,5 +168,3 @@ BOOST_AUTO_TEST_CASE( ManifoldPipelineTC ) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
-
-# endif

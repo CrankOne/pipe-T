@@ -95,7 +95,7 @@ BOOST_AUTO_TEST_CASE( NonwrappingHandlers ) {
 // test::ComplicatedHandlerResult, while processors return integer values).
 // At this case, the HandlerResultConverter<> of certain implementation is
 // invoked to provide conversion method.
-BOOST_AUTO_TEST_CASE( WrappingHandlers ) {
+BOOST_AUTO_TEST_CASE( WrappingHandlers, * boost::unit_test::depends_on("Pipeline_types/NonwrappingHandlers") ) {
     double someVal = 1.23;
     pipet::aux::PipelineHandler< double
                                , pipet::test::ComplicatedHandlerResult

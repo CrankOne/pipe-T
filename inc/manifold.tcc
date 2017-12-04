@@ -52,8 +52,10 @@ enum ManifoldRC : int8_t {
     kNextMessage    = 0x1,
     kNextHandler    = 0x2,
     kForkFilled     = 0x4,
+    RC_Continue     = kNextMessage | kNextHandler
 };
 
+# if 0
 template<typename MessageT>
 struct iManifoldProcessor {
 public:
@@ -61,46 +63,64 @@ public:
 public:
     virtual ManifoldRC operator()( Message & ) = 0;
 };
+# endif
+
+template< typename MessageT
+        , typename DesiredProcessingResultT
+        , typename RealProcessingResultT
+        , typename ProcessorT>
+class ManifoldHandler : public PipelineHandler< MessageT
+                                              , DesiredProcessingResultT
+                                              , RealProcessingResultT
+                                              , ProcessorT> {
+public:
+    typedef PipelineHandler< MessageT
+                           , DesiredProcessingResultT
+                           , RealProcessingResultT
+                           , ProcessorT> Parent;
+    typedef typename Parent::Message Message;
+    typedef DesiredProcessingResultT ProcRes;
+    typedef ProcessorT Processor;
+    typedef typename Parent::ProcessorRef ProcessorRef;
+public:
+    ManifoldHandler( ProcessorRef p ) : Parent(p) {}
+};
 
 template< typename MessageT
         , typename ManifoldResultT
         , template<typename T> class TChainT=aux::STLAllocatedVector>
 struct ManifoldTraits : protected PipelineTraits< MessageT
-                                                , iManifoldProcessor<MessageT>
                                                 , ManifoldRC
                                                 , ManifoldResultT > {
     /// Self traits typedef.
     typedef ManifoldTraits<MessageT, ManifoldResultT> Self;
     /// Parent (hidden) typedef.
     typedef PipelineTraits< MessageT
-                          , iManifoldProcessor<MessageT>
                           , ManifoldRC
                           , ManifoldResultT > Parent;
     /// Message type (e.g. physical event).
     typedef typename Parent::Message   Message;
-    /// Processor type (must be callable --- function or functor).
-    typedef typename Parent::Processor Processor;
     /// Result type, returning by handler call.
     typedef typename Parent::ProcRes   ProcRes;
     /// Result type, that shall be returned by pipeline invokation.
     typedef typename Parent::PipelineProcRes PipelineProcRes;
     /// Base source interface that has to be implemented.
     typedef typename Parent::ISource ISource;
-    /// Concrete handler interfacing type.
-    class Handler : public aux::PipelineHandler<Self> {
+    // Concrete handler interfacing type.
+    class AbstractHandler : public Parent::AbstractHandler {
     private:
         ISource * _jSrc;
     public:
-        Handler( Processor * p ) : aux::PipelineHandler<Self>( p ) {
-            _jSrc = dynamic_cast<ISource *>(p);
-        }
+        //Handler( Processor * p ) : aux::PipelineHandler<Self>( p ) {
+        //    _jSrc = dynamic_cast<ISource *>(p);
+        //}
         /// Will return pointer to junction as a source.
         virtual ISource * junction_ptr() {
             return _jSrc;
         }
     };
     /// Concrete chain interfacing type (parent for this class).
-    typedef TChainT<Handler> Chain;
+    typedef TChainT<AbstractHandler *> Chain;
     /// This IArbiter interface introduces additional is_fork_filled() method
     /// that returns true, if latest handler result raised the JUNCTION_DONE
     /// flag.
@@ -137,6 +157,29 @@ struct ManifoldTraits : protected PipelineTraits< MessageT
         friend class Manifold<Message, ManifoldResultT>;
         friend class BasicPipeline<Self>;
     };  // class IArbiter
+
+    /// This trait aliases a template class referencing end-point handler
+    /// template.
+    template< typename TMsgT
+            , typename TDesiredProcResT
+            , typename TRealProcResT
+            , typename TCallableT > using HandlerTemplateClass = \
+            aux::ManifoldHandler<TMsgT, TDesiredProcResT, TRealProcResT, TCallableT>;
+};
+
+
+template<>
+struct HandlerResultConverter<ManifoldRC, void> {
+    virtual ManifoldRC convert_result( void ) {
+        return RC_Continue;
+    }
+};
+
+template<>
+struct HandlerResultConverter<ManifoldRC, bool> {
+    virtual ManifoldRC convert_result( bool v ) {
+        return v ? RC_Continue : kNextMessage;
+    }
 };
 
 }  // namespace aux
@@ -158,10 +201,9 @@ public:
     typedef aux::ManifoldTraits<MessageT, ResultT> Traits;
     typedef BasicPipeline< aux::ManifoldTraits<MessageT, ResultT> > Parent;
     typedef typename Traits::Message   Message;
-    typedef typename Traits::Processor Processor;
     typedef typename Traits::ProcRes   ProcRes;
     typedef typename Traits::PipelineProcRes PipelineProcRes;
-    typedef typename Traits::Handler   Handler;
+    typedef typename Traits::AbstractHandler   AbstractHandler;
     typedef typename Traits::Chain     Chain;
     typedef typename Traits::ISource   ISource;
     typedef typename Traits::IArbiter  IArbiter;
@@ -254,7 +296,7 @@ public:
     }
 };  // class ForkProcessor
 
-
+# if 0
 template<typename MessageT>
 class SubManifold : public Manifold< MessageT
                                    , aux::ManifoldRC>
@@ -273,6 +315,7 @@ public:
         return this->process(msg);
     }
 };
+# endif
 
 //template< typename MessageT
 //        , typename ResultT> ResultT

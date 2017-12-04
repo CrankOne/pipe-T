@@ -37,6 +37,8 @@ target_compile_features( pipeT_ut PUBLIC
             cxx_variadic_templates
             cxx_template_template_parameters )
 
+set( CMAKE_CXX_CFLAGS "${CMAKE_CXX_CFLAGS} -Wfatal-errors" )
+
 target_link_libraries( pipeT_ut ${Boost_LIBRARIES} )
 target_link_libraries( pipeT_ut ${pipeT_LIB} )
 

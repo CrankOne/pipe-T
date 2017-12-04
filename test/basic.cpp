@@ -22,7 +22,6 @@
 
 # include "basic_pipeline.tcc"
 
-# if 0
 # include <string>
 
 # define BOOST_TEST_NO_MAIN
@@ -85,9 +84,8 @@ public:
 // Define pipeline type from template:
 
 typedef pipet::PipelineTraits< Message
-                          , Processor
-                          , int
-                          , int > Traits;
+                             , int
+                             , int > Traits;
 
 
 // Define arbiter class:
@@ -159,10 +157,10 @@ BOOST_AUTO_TEST_CASE( LinearPipelineTC ) {
     pipet::test::TestingArbiter ta;
     pipet::BasicPipeline<pipet::test::Traits> ppl( &ta );
 
-    ppl.push_back( &p1 );
-    ppl.push_back( &p2 );
-    ppl.push_back( &p3 );
-    ppl.push_back( &p4 );
+    ppl.push_back( p1 );
+    ppl.push_back( p2 );
+    ppl.push_back( p3 );
+    ppl.push_back( p4 );
 
     pipet::test::TestingSource src;
 
@@ -171,11 +169,9 @@ BOOST_AUTO_TEST_CASE( LinearPipelineTC ) {
     n = ppl.process( pipet::test::gSrcMsgs[0] );
     BOOST_CHECK( 0 == n );
 
-    BOOST_TEST_MESSAGE( "    ...basic pipeline processing passed." );
-
     int idx1 = 0, idx2 = 0;
     for( const auto & h : ppl ) {
-        for( auto nEv : h.processor().ids_history() ) {
+        for( auto nEv : h->processor<pipet::test::Processor>().ids_history() ) {
             BOOST_CHECK( pipet::test::pIDS[idx1][idx2] == nEv );
             ++idx2;
         }
@@ -186,4 +182,3 @@ BOOST_AUTO_TEST_CASE( LinearPipelineTC ) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
-# endif
