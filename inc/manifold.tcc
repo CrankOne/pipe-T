@@ -47,29 +47,11 @@ namespace aux {
 /// 4. Discriminate --- shall pull out the event/sub-event/sample. Arbiter,
 /// depending of its modification, may keep process this event.
 /// Note: all modification will be refused upon abort/discrimination.
-enum ManifoldProcessingResultFlags : int8_t {
-    CONTINUE_PROCESSING = 0x1,  ///< when set, all the analysis has to be interrupted
-    ABORT_CURRENT       = 0x2,  ///< processing of current event or payload has to be interrupted
-    DISCRIMINATE        = 0x4,  ///< processing continues, but the current event/payload has to be considered as discriminated
-    NOT_MODIFIED        = 0x8,  ///< the event or data payload wasn't modified
-    JUNCTION_DONE       = 0x10  ///< returned ONLY by f/j handlers. Has special meaning.
-    // shortcuts:
-    /// For invasive processor task (e.g. reconstruction, applying calibration)
-    , RC_CORRECTED                      = CONTINUE_PROCESSING
-    /// For non-invasive processors (e.g. stats accumulators)
-    , RC_ACCOUNTED                      = CONTINUE_PROCESSING | NOT_MODIFIED
-    /// For invasive processor revealed cut condition (event still valid!)
-    , RC_DISCRIMINATE_CORRECTED         = CONTINUE_PROCESSING | DISCRIMINATE
-    /// For non-invasive cutter, to exclude event from physical analysis
-    , RC_DISCRIMINATE                   = CONTINUE_PROCESSING | DISCRIMINATE  | NOT_MODIFIED
-    /// May be useful for invasive data look-up procedures (xxx?)
-    , RC_DONE                           = CONTINUE_PROCESSING | ABORT_CURRENT
-    /// Useful for non-invasive data look-up procedures
-    , RC_ABORT_CURRENT                  = CONTINUE_PROCESSING | ABORT_CURRENT | NOT_MODIFIED
-    /// Invasive processor encountered invalid event that shouldn't be analysed further
-    , RC_ABORT_DISCRIMINATE_CORRECTED   = CONTINUE_PROCESSING | DISCRIMINATE
-    /// Non-invasive processor encountered invalid event that shouldn't be analysed further
-    , RC_ABORT_DISCRIMINATE             = CONTINUE_PROCESSING | DISCRIMINATE  | NOT_MODIFIED
+enum ManifoldRC : int8_t {
+    RC_AbortAll     = 0x0,
+    kNextMessage    = 0x1,
+    kNextHandler    = 0x2,
+    kForkFilled     = 0x4,
 };
 
 template<typename MessageT>
@@ -77,7 +59,7 @@ struct iManifoldProcessor {
 public:
     typedef MessageT Message;
 public:
-    virtual ManifoldProcessingResultFlags operator()( Message & ) = 0;
+    virtual ManifoldRC operator()( Message & ) = 0;
 };
 
 template< typename MessageT
@@ -85,14 +67,14 @@ template< typename MessageT
         , template<typename T> class TChainT=aux::STLAllocatedVector>
 struct ManifoldTraits : protected PipelineTraits< MessageT
                                                 , iManifoldProcessor<MessageT>
-                                                , ManifoldProcessingResultFlags
+                                                , ManifoldRC
                                                 , ManifoldResultT > {
     /// Self traits typedef.
     typedef ManifoldTraits<MessageT, ManifoldResultT> Self;
     /// Parent (hidden) typedef.
     typedef PipelineTraits< MessageT
                           , iManifoldProcessor<MessageT>
-                          , ManifoldProcessingResultFlags
+                          , ManifoldRC
                           , ManifoldResultT > Parent;
     /// Message type (e.g. physical event).
     typedef typename Parent::Message   Message;
@@ -135,10 +117,10 @@ struct ManifoldTraits : protected PipelineTraits< MessageT
         //virtual PipelineProcRes _V_
     public:
         /// Causes transitions
-        virtual bool _V_consider_handler_result( ManifoldProcessingResultFlags fs ) override {
-            _doAbort = !(CONTINUE_PROCESSING & fs);
-            _forkFilled = JUNCTION_DONE & fs;
-            return _doAbort || (ABORT_CURRENT & fs);
+        virtual bool _V_consider_handler_result( ManifoldRC fs ) override {
+            _doAbort = !((kNextMessage & fs) | (kNextHandler & fs));
+            _forkFilled = kForkFilled & fs;
+            return kNextMessage & fs;
         }
         virtual bool _V_next_message() override {
             return !_doAbort;
@@ -153,7 +135,7 @@ struct ManifoldTraits : protected PipelineTraits< MessageT
         bool do_skip() const { return _doSkip; }
         bool do_abort() const { return _doAbort; }
         friend class Manifold<Message, ManifoldResultT>;
-        friend class Pipeline<Self>;
+        friend class BasicPipeline<Self>;
     };  // class IArbiter
 };
 
@@ -168,13 +150,13 @@ struct ManifoldTraits : protected PipelineTraits< MessageT
  * */
 template< typename MessageT
         , typename ResultT>
-class Manifold : public Pipeline< aux::ManifoldTraits< MessageT
+class Manifold : public BasicPipeline< aux::ManifoldTraits< MessageT
                                                      , ResultT
                                                      >
                                 > {
 public:
     typedef aux::ManifoldTraits<MessageT, ResultT> Traits;
-    typedef Pipeline< aux::ManifoldTraits<MessageT, ResultT> > Parent;
+    typedef BasicPipeline< aux::ManifoldTraits<MessageT, ResultT> > Parent;
     typedef typename Traits::Message   Message;
     typedef typename Traits::Processor Processor;
     typedef typename Traits::ProcRes   ProcRes;
@@ -275,19 +257,19 @@ public:
 
 template<typename MessageT>
 class SubManifold : public Manifold< MessageT
-                                   , aux::ManifoldProcessingResultFlags>
+                                   , aux::ManifoldRC>
                   , public aux::iManifoldProcessor<MessageT> {
 public:
     typedef typename Manifold< MessageT
-                             , aux::ManifoldProcessingResultFlags>::Traits Traits;
+                             , aux::ManifoldRC>::Traits Traits;
     class Arbiter : public Traits::IArbiter {
     protected:
-        virtual aux::ManifoldProcessingResultFlags _V_pop_result() override {
+        virtual aux::ManifoldRC _V_pop_result() override {
             pipet_error( NotImplemented, "Function is not yet implemented." );  // TODO
         }
     };
 public:
-    virtual aux::ManifoldProcessingResultFlags operator()( MessageT & msg ) override {
+    virtual aux::ManifoldRC operator()( MessageT & msg ) override {
         return this->process(msg);
     }
 };

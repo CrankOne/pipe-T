@@ -869,7 +869,6 @@ EXCLUDE_SYMLINKS       = NO
 
 EXCLUDE_PATTERNS       =  */*.build/* \
                           */doc-html/* \
-                          */examples \
                           */pipe-T.build \
                           */test \
                           */doc-html
@@ -886,7 +885,10 @@ EXCLUDE_PATTERNS       =  */*.build/* \
 EXCLUDE_SYMBOLS        = EX_* \
                          H_*_H \
                          std::* \
-                         boost::*
+                         boost::* \
+                         My* \
+                         my_* \
+                         main
 
 # The EXAMPLE_PATH tag can be used to specify one or more files or directories
 # that contain example code fragments that are included (see the \include
@@ -899,7 +901,7 @@ EXAMPLE_PATH           = @CMAKE_SOURCE_DIR@/examples
 # *.h) to filter out the source-files in the directories. If left blank all
 # files are included.
 
-EXAMPLE_PATTERNS       = *
+EXAMPLE_PATTERNS       = *.cpp
 
 # If the EXAMPLE_RECURSIVE tag is set to YES then subdirectories will be
 # searched for input files to be used with the \include or \dontinclude commands

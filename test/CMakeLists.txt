@@ -26,7 +26,7 @@ find_package( Boost ${Boost_FORCE_VERSION}
               REQUIRED )
 
 add_executable( pipeT_ut
-                main.cpp basic.cpp manifold.cpp )
+                main.cpp handler.cpp basic.cpp manifold.cpp )
 
 target_compile_features( pipeT_ut PUBLIC
             c_variadic_macros
