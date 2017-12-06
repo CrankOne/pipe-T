@@ -65,6 +65,7 @@ public:
 };
 # endif
 
+# if 1
 template< typename MessageT
         , typename DesiredProcessingResultT
         , typename RealProcessingResultT
@@ -85,6 +86,7 @@ public:
 public:
     ManifoldHandler( ProcessorRef p ) : Parent(p) {}
 };
+# endif
 
 template< typename MessageT
         , typename ManifoldResultT
@@ -165,6 +167,26 @@ struct ManifoldTraits : protected PipelineTraits< MessageT
             , typename TRealProcResT
             , typename TCallableT > using HandlerTemplateClass = \
             aux::ManifoldHandler<TMsgT, TDesiredProcResT, TRealProcResT, TCallableT>;
+
+    # if 0
+    template< typename TMsgT
+            , typename TDesiredProcResT
+            , typename TRealProcResT
+            , typename TCallableT >
+    class HandlerTemplateClass : public AbstractHandler {
+    public:
+        typedef PipelineHandler< TMsgT
+                               , TDesiredProcResT
+                               , TRealProcResT
+                               , TCallableT > Parent;
+        typedef typename Parent::Message Message;
+        typedef TDesiredProcResT ProcRes;
+        typedef TCallableT Processor;
+        typedef typename Parent::ProcessorRef ProcessorRef;
+    public:
+        HandlerTemplateClass( ProcessorRef p ) : Parent(p) {}
+    };
+    # endif
 };
 
 

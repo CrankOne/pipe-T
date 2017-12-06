@@ -40,7 +40,9 @@ using STLAllocatedVector = std::vector<T>;
 template< typename MessageT
         , typename DesiredProcessingResultT
         , typename RealProcessingResultT
-        , typename ProcessorT>
+        , typename ProcessorT
+        , template< typename TMsgT
+                  , typename TProcResT> class TAbstractHandlerT>
 class PipelineHandler;
 
 template< typename CallableT
@@ -49,7 +51,9 @@ template< typename CallableT
         , template< typename TMsgT
                   , typename TDesiredProcResT
                   , typename TRealProcResT
-                  , typename TCallableT> class THandlerT
+                  , typename TCallableT
+                  , template<typename, typename> class TAbstractHandlerT> class THandlerT
+        , template<typename, typename> class TAbstractHandlerT
         >
 struct ProcessorTraits;
 
@@ -63,10 +67,22 @@ public:
     virtual ~iPipelineHandler() {}
     virtual ProcRes process( Message & ) = 0;
 
-    template<typename T> typename aux::ProcessorTraits<T, Message, ProcessingResultT, PipelineHandler>::ProcessorRef
+    # if 0
+    template<typename T> typename aux::ProcessorTraits< T
+                                                      , Message
+                                                      , ProcessingResultT
+                                                      , PipelineHandler
+                                                      , iPipelineHandler
+                                                      >::ProcessorRef
     processor() {
-        return dynamic_cast<typename aux::ProcessorTraits<T, Message, ProcessingResultT, PipelineHandler>::Handler *>(this)->processor();
+        return dynamic_cast<typename aux::ProcessorTraits< T
+                                                         , Message
+                                                         , ProcessingResultT
+                                                         , PipelineHandler
+                                                         , iPipelineHandler
+                                                         >::Handler *>(this)->processor();
     }
+    # endif
 };  // class iBasicPipelineHandler
 
 // ...
@@ -92,15 +108,18 @@ struct HandlerResultConverter;  // default has to be NOT implemented!
 template< typename MessageT
         , typename DesiredProcessingResultT
         , typename RealProcessingResultT
-        , typename ProcessorT>
-class PipelineHandler : public iPipelineHandler< MessageT
+        , typename ProcessorT
+        , template< typename TMsgT
+                  , typename TProcResT> class TAbstractHandlerT
+        >
+class PipelineHandler : public TAbstractHandlerT< MessageT
                                                , DesiredProcessingResultT>
                       , public HandlerResultConverter<DesiredProcessingResultT, RealProcessingResultT> {
 public:
     typedef MessageT Message;
     typedef DesiredProcessingResultT ProcRes;
     typedef ProcessorT Processor;
-    typedef iPipelineHandler<Message, DesiredProcessingResultT> Parent;
+    typedef TAbstractHandlerT<Message, DesiredProcessingResultT> Parent;
     typedef typename std::conditional<std::is_function<Processor>::value,
                                       ProcessorT,
                                       ProcessorT&>::type ProcessorRef;
@@ -119,17 +138,21 @@ public:
 // by pipeline.
 template< typename MessageT
         , typename ProcessingResultT
-        , typename ProcessorT>
+        , typename ProcessorT
+        , template< typename TMsgT
+                  , typename TProcResT> class TAbstractHandlerT
+        >
 class PipelineHandler< MessageT
                      , ProcessingResultT
                      , ProcessingResultT
-                     , ProcessorT > : public iPipelineHandler< MessageT
+                     , ProcessorT
+                     , TAbstractHandlerT> : public TAbstractHandlerT< MessageT
                                                              , ProcessingResultT> {
 public:
     typedef MessageT Message;
     typedef ProcessingResultT ProcRes;
     typedef ProcessorT Processor;
-    typedef iPipelineHandler<Message, ProcRes> Parent;
+    typedef TAbstractHandlerT<Message, ProcRes> Parent;
     typedef typename std::conditional<std::is_function<Processor>::value,
                                       ProcessorT,
                                       ProcessorT&>::type ProcessorRef;
@@ -197,13 +220,21 @@ struct PipelineTraits {
         friend class BasicPipeline<Self>;
     };  // class IArbiter
 
+    template< typename TMsgT
+            , typename TProcResT> using AbstractHandlerTemplateClass =
+            aux::iPipelineHandler<TMsgT, TProcResT >;
+
     /// This trait aliases a template class referencing end-point handler
     /// template.
     template< typename TMsgT
             , typename TDesiredProcResT
             , typename TRealProcResT
             , typename TCallableT > using HandlerTemplateClass = \
-            aux::PipelineHandler<TMsgT, TDesiredProcResT, TRealProcResT, TCallableT>;
+            aux::PipelineHandler< TMsgT
+                                , TDesiredProcResT
+                                , TRealProcResT
+                                , TCallableT
+                                , aux::iPipelineHandler >;
 };
 
 
@@ -215,14 +246,17 @@ template< typename CallableT
         , template< typename TMsgT
                   , typename TDesiredProcResT
                   , typename TRealProcResT
-                  , typename TCallableT> class THandlerT
+                  , typename TCallableT
+                  , template<typename, typename> class TAbstractHandlerTT> class THandlerT
+        , template<typename, typename> class TAbstractHandlerT
         >
 struct ProcessorTraits {
     typedef typename std::result_of<CallableT(MessageT &)>::type RealProcRes;
     typedef THandlerT< MessageT
                      , DesiredProcResT
                      , RealProcRes
-                     , CallableT > Handler;
+                     , CallableT
+                     , TAbstractHandlerT > Handler;
     //typedef typename Handler::Parent AbstractHandler;
     typedef typename Handler::ProcessorRef ProcessorRef;
     
@@ -305,10 +339,13 @@ public:
     /// Shortcut for inserting processor at the back of pipeline.
     template<typename CallableT>
     void push_back( CallableT & p ) {
-        Chain::push_back( aux::ProcessorTraits< CallableT
-                                              , Message
-                                              , ProcRes
-                                              , PipelineTraitsT::template HandlerTemplateClass>::template new_handler<AbstractHandler>(p) );
+        Chain::push_back(
+                aux::ProcessorTraits< CallableT
+                                    , Message
+                                    , ProcRes
+                                    , PipelineTraitsT::template HandlerTemplateClass
+                                    , PipelineTraitsT::template AbstractHandlerTemplateClass
+                                    >::template new_handler<AbstractHandler>(p) );
     }
     /// Call operator for single message --- to use pipeline as a processor.
     PipelineProcRes operator()( Message & msg ) {
