@@ -80,22 +80,19 @@ public:
     const std::vector<int> & ids_history() const { return _idsHistory; }
 };
 
-
-// Define pipeline type from template:
-
-typedef pipet::PipelineTraits< Message
-                             , int
-                             , int > Traits;
-
+typedef PrimitivePipe< Message
+                   , int
+                   , int
+                   , iBasicHandler > TestingPipeline;
 
 // Define arbiter class:
 
-class TestingArbiter : public Traits::IArbiter {
+class TestingArbiter : public TestingPipeline::IArbiter {
 protected:
     size_t _nMsg;
     bool _skipNext, _abortProcessing;
-protected:
-    virtual bool _V_consider_handler_result( int rc ) override {
+public:
+    virtual bool consider_handler_result( int rc ) override {
         BOOST_CHECK( ! (rc & msgFrbdn) );
         BOOST_CHECK( ! _skipNext );
         BOOST_CHECK( ! _abortProcessing );
@@ -107,13 +104,13 @@ protected:
         }
         return !(_skipNext | _abortProcessing);
     }
-    virtual int _V_pop_result() override {
+    virtual int pop_result() override {
         int res = (int) _nMsg;
         _nMsg = 0;
         _skipNext = _abortProcessing = false;
         return res;
     }
-    virtual bool _V_next_message() override {
+    virtual bool next_message() override {
         _skipNext = false;
         if(!_abortProcessing) {
             ++_nMsg;
@@ -129,7 +126,7 @@ public:
 
 // Define source wrapper simply iterating over gSrcMsgs array
 
-class TestingSource : public Traits::ISource {
+class TestingSource : public TestingPipeline::ISource {
 private:
     Message * _latest;
 public:
@@ -155,7 +152,7 @@ BOOST_AUTO_TEST_CASE( LinearPipelineTC ) {
     pipet::test::Processor p1(0), p2(1), p3(2), p4(3);
 
     pipet::test::TestingArbiter ta;
-    pipet::BasicPipeline<pipet::test::Traits> ppl( &ta );
+    pipet::test::TestingPipeline ppl( &ta );
 
     ppl.push_back( p1 );
     ppl.push_back( p2 );

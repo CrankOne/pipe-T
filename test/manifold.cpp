@@ -20,6 +20,7 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+# if 0
 # include "manifold.tcc"
 
 # define BOOST_TEST_NO_MAIN
@@ -167,4 +168,4 @@ BOOST_AUTO_TEST_CASE( ManifoldPipelineTC ) {
 }
 
 BOOST_AUTO_TEST_SUITE_END()
-
+# endif

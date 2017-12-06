@@ -48,14 +48,11 @@ struct ComplicatedHandlerResult {
 
 }  // namespace test
 
-namespace aux {
-
 template<>
 struct HandlerResultConverter<test::ComplicatedHandlerResult, int> {
-    virtual test::ComplicatedHandlerResult convert_result( int n ) { return {n > 0, n < 0}; }
+    virtual test::ComplicatedHandlerResult convert( int n ) { return {n > 0, n < 0}; }
 };
 
-}  // namespace aux
 }  // namespace pipet
 
 //
@@ -68,18 +65,16 @@ BOOST_AUTO_TEST_SUITE( Pipeline_types )
 // type expected by the pipeline.
 BOOST_AUTO_TEST_CASE( NonwrappingHandlers ) {
     double someVal = 1.23;
-    pipet::aux::PipelineHandler< double
-                               , int
-                               , int
-                               , int(&)(double &) > h1( pipet::test::trivial_processor );
+    pipet::PrimitiveHandler< double
+                           , int
+                           , int(&)(double &) > h1( pipet::test::trivial_processor );
     // Check, that handler #1 is really invokable:
     BOOST_CHECK( h1.process( someVal ) == 0 );
 
     pipet::test::ProcessorClass p1;
-    pipet::aux::PipelineHandler< double
-                               , int
-                               , int
-                               , pipet::test::ProcessorClass > h2( p1 );
+    pipet::PrimitiveHandler< double
+                           , int
+                           , pipet::test::ProcessorClass > h2( p1 );
 
     // Check, that handler #2 is really invokable:
     BOOST_CHECK( h2.process( someVal ) == 1 );
@@ -97,18 +92,16 @@ BOOST_AUTO_TEST_CASE( NonwrappingHandlers ) {
 // invoked to provide conversion method.
 BOOST_AUTO_TEST_CASE( WrappingHandlers, * boost::unit_test::depends_on("Pipeline_types/NonwrappingHandlers") ) {
     double someVal = 1.23;
-    pipet::aux::PipelineHandler< double
+    pipet::PrimitiveHandler< double
                                , pipet::test::ComplicatedHandlerResult
-                               , int
                                , int(&)(double &) > h1( pipet::test::trivial_processor );
     // Check, that handler #1 is really invokable:
     pipet::test::ComplicatedHandlerResult r = h1.process( someVal );
     BOOST_CHECK( !r.a );
     BOOST_CHECK( !r.a );
     pipet::test::ProcessorClass p1;
-    pipet::aux::PipelineHandler< double
+    pipet::PrimitiveHandler< double
                                , pipet::test::ComplicatedHandlerResult
-                               , int
                                , pipet::test::ProcessorClass > h2( p1 );
 
     // Check, that handler #2 is really invokable:
