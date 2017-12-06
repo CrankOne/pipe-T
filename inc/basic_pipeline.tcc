@@ -37,29 +37,13 @@ namespace aux {
 template<typename T>
 using STLAllocatedVector = std::vector<T>;
 
-template< typename MessageT
-        , typename DesiredProcessingResultT
-        , typename RealProcessingResultT
-        , typename ProcessorT
-        , template< typename TMsgT
-                  , typename TProcResT> class TAbstractHandlerT>
-class PipelineHandler;
+}  // namespace aux
 
-template< typename CallableT
-        , typename MessageT
-        , typename DesiredProcResT
-        , template< typename TMsgT
-                  , typename TDesiredProcResT
-                  , typename TRealProcResT
-                  , typename TCallableT
-                  , template<typename, typename> class TAbstractHandlerT> class THandlerT
-        , template<typename, typename> class TAbstractHandlerT
-        >
-struct ProcessorTraits;
-
+/// The most basic pipeline handler class. Is an abstract base for linear
+/// pipeline.
 template< typename MessageT
         , typename ProcessingResultT>
-class iPipelineHandler {
+class iHandler {
 public:
     typedef MessageT Message;
     typedef ProcessingResultT ProcRes;
@@ -276,16 +260,28 @@ struct ProcessorTraits {
  * invokation of processing atoms stored at ordered container, guided by
  * arbitering class.
  * */
-template< typename PipelineTraitsT >
-class BasicPipeline : public PipelineTraitsT::Chain {
+template< typename HandlerT
+        , typename PipelineResultT
+        , template<typename T> class TChainT=aux::STLAllocatedVector >
+class BasicPipeline : public TChainT<typename HandlerTraits<HandlerT>::HandlerRef> {
 public:
-    typedef typename PipelineTraitsT::Message   Message;
-    typedef typename PipelineTraitsT::ProcRes   ProcRes;
-    typedef typename PipelineTraitsT::PipelineProcRes PipelineProcRes;
-    typedef typename PipelineTraitsT::AbstractHandler AbstractHandler;
-    typedef typename PipelineTraitsT::Chain     Chain;
-    typedef typename PipelineTraitsT::ISource   ISource;
-    typedef typename PipelineTraitsT::IArbiter  IArbiter;
+    typedef HandlerT Handler;
+    typedef PipelineResultT PipelineResult;
+    typedef HandlerTraits<Handler> TheHandlerTraits;
+    // Other types are deduced using the TheHandlerTraits info:
+    typedef typename TheHandlerTraits::Message          Message;
+    typedef typename TheHandlerTraits::Result           Result;
+    typedef typename TheHandlerTraits::AbstractHandler  AbstractHandler;
+    typedef typename TheHandlerTraits::HandlerRef       HandlerRef;
+    typedef typename TChainT<HandlerRef>                Chain;
+
+    //typedef typename PipelineTraitsT::Message   Message;
+    //typedef typename PipelineTraitsT::ProcRes   ProcRes;
+    //typedef typename PipelineTraitsT::PipelineProcRes PipelineProcRes;
+    //typedef typename PipelineTraitsT::AbstractHandler AbstractHandler;
+    //typedef typename PipelineTraitsT::Chain     Chain;
+    //typedef typename PipelineTraitsT::ISource   ISource;
+    //typedef typename PipelineTraitsT::IArbiter  IArbiter;
 private:
     IArbiter * _a;
 protected:
