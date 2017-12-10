@@ -35,16 +35,39 @@
 namespace pipet {
 namespace errors {
 
+/// User code did not initialize some crucial variable.
 class Uninitialized : public std::runtime_error {
 public:
     Uninitialized( const std::string & s ) : std::runtime_error(s) {}
 };  // class Uninitialized
 
+
+/// Type mismatch while runtime type casting.
+class BadCast : public std::runtime_error {
+public:
+    BadCast( const std::string & s ) : std::runtime_error(s) {}
+};  // class Uninitialized
+
+/// Manifold or pipeline primitive is empty and can not perform any work. That's
+/// an error because there has no "default result" to be returned by pipeline
+/// or manifold in trivial case.
 class EmptyManifold : public std::runtime_error {
 public:
     EmptyManifold( const std::string & s ) : std::runtime_error(s) {}
 };  // class EmptyManifold
 
+
+/// Indicates runtime error due to erroneous FSM state (user code may
+/// potentially break it). Note that NDEBUG macro can disable some checks (for
+/// the sake of performance) suppressing this exception.
+class Malfunction : public std::runtime_error {
+public:
+    Malfunction( const std::string & s ) : std::runtime_error(s) {}
+};  // class Malfunction
+
+
+/// Development stub. Indicates code that is not being currently implemented but
+/// is provisioned by general architecture.
 class NotImplemented : public std::runtime_error {
 public:
     NotImplemented( const std::string & s ) : std::runtime_error(s) {}

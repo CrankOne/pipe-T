@@ -27,6 +27,7 @@
 
 # include <type_traits>
 # include <vector>
+# include <functional>
 
 namespace pipet {
 
@@ -60,26 +61,36 @@ namespace aux {
 template<typename T>
 using STLAllocatedVector = std::vector<T>;
 
+// This template is splitted into two separate specializations in order to avoid
+// mentioning of std::result_of<CallableT(Message &)>::type for function type.
+// Even in std::conditional<> compilers will try to defer something and will get
+// stuck with "function returning a function".
+template< typename CallableT
+        , typename MessageT
+        , bool isFunction=std::is_function<CallableT>::value
+        > struct CallableTraits;
 
 template< typename CallableT
         , typename MessageT
-        >
-struct CallableTraits {
-    typedef typename std::result_of<CallableT(MessageT &)>::type CallableResult;
-    typedef typename std::conditional<
-            std::is_function<CallableT>::value,
-            CallableT,
-            CallableT &
-        >::type CallableRef;
-};  // CallableTraits
+        > struct CallableTraits<CallableT, MessageT, true> {
+    typedef CallableT Callable;
+    typedef MessageT Message;
+    constexpr static bool isFunction = true;
+    typedef typename std::function<CallableT>::result_type CallableResult;
+    typedef CallableT & CallableRef;
+};  // CallableTraits (functions)
+
+template< typename CallableT
+        , typename MessageT
+        > struct CallableTraits<CallableT, MessageT, false> {
+    typedef CallableT Callable;
+    typedef MessageT Message;
+    constexpr static bool isFunction = false;
+    typedef typename std::result_of<CallableT(Message &)>::type CallableResult;
+    typedef CallableT & CallableRef;
+};  // CallableTraits (classes)
 
 }  // namespace aux
-
-template< typename MessageT
-        , typename ResultT
-        , typename CallableT
-        >
-class PrimitiveHandler;
 
 /// The most basic pipeline handler class. Is an abstract base for linear
 /// pipeline.
@@ -90,19 +101,41 @@ public:
     typedef MessageT Message;
     typedef ProcessingResultT Result;
 public:
+    /// This constructor does nothing, but is required for extensibility.
+    template<typename T> iBasicHandler( T & ) {}
     virtual ~iBasicHandler() {}
     virtual Result process( Message & ) = 0;
 
     template<typename CallableT> typename aux::CallableTraits< CallableT
-                                                      , Message
-                                                      >::CallableRef
-    processor() {
-        return dynamic_cast<PrimitiveHandler< Message
-                                            , Result
-                                            , CallableT
-                                            > * >(this)->processor();
-    }
+                                                             , Message
+                                                             >::CallableRef
+    processor();
+    // ^^^ impl. needs fwd decl. of PrimitiveHandler
 };  // class iBasicPipelineHandler
+
+template< typename MessageT
+        , typename ResultT
+        , typename CallableT
+        , template<typename, typename> class ParentTClass=iBasicHandler
+        > class PrimitiveHandler;
+
+//
+template< typename MessageT
+        , typename ProcessingResultT >
+template< typename CallableT > typename aux::CallableTraits< CallableT
+                                                           , MessageT
+                                                           >::CallableRef
+iBasicHandler<MessageT, ProcessingResultT>::processor() {
+    auto hPtr = dynamic_cast<PrimitiveHandler< Message
+                                             , Result
+                                             , CallableT
+                                             > * >(this);
+    if( !hPtr ) {
+        pipet_error( BadCast, "Handler type cast mismatch. Requesting "
+                "processor handle." );
+    }
+    return hPtr->processor();
+};
 
 template< typename DesiredT,
           typename RealT >
@@ -116,8 +149,9 @@ struct HandlerResultConverter<T, T> {
 template< typename MessageT
         , typename ResultT
         , typename CallableT
+        , template<typename, typename> class ParentTClass
         >
-class PrimitiveHandler : public iBasicHandler<MessageT, ResultT>
+class PrimitiveHandler : public ParentTClass<MessageT, ResultT>
                        , public HandlerResultConverter< ResultT
                                                       , typename aux::CallableTraits<CallableT, MessageT>::CallableResult
                                                       > {
@@ -128,10 +162,11 @@ public:
     typedef HandlerResultConverter< ResultT
                                   , typename TheCallableTraits::CallableResult
                                   > ResultConverter;
+    typedef ParentTClass<MessageT, ResultT>             Parent;
 private:
     CallableRef _cRef;
 public:
-    PrimitiveHandler( CallableRef cRef ) : _cRef( cRef ) {}
+    PrimitiveHandler( CallableRef cRef ) : Parent(cRef), _cRef( cRef ) {}
     virtual Result process( MessageT & m ) { return ResultConverter::convert(_cRef( m )); }
     CallableRef processor() { return _cRef; }
     const CallableRef processor() const { return _cRef; }
@@ -148,7 +183,7 @@ template< typename MessageT
         , typename HandlerResultT>
 struct HandlerTraits< MessageT
                     , HandlerResultT
-                    , iBasicHandler > {
+                    , iBasicHandler> {
     typedef MessageT Message;
     typedef HandlerResultT HandlerResult;
     typedef iBasicHandler<Message, HandlerResult>   AbstractHandler;
@@ -156,161 +191,11 @@ struct HandlerTraits< MessageT
     template<typename CallableT> using Handler = PrimitiveHandler<Message, HandlerResult, CallableT>;
 };
 
-# if 0
-// ...
-//template< typename MessageT
-//        , typename ProcessingResultT
-//        , typename RealProcessingResultT>
-//class iWrappingPipelineHandler {
-//public:
-//    wrap_result<ProcessingResultT, RealProcessingResultT>
-//};
-
-/**@brief Pipeline handler template wrapping the processing functor.
- * @class PipelineHandler
- *
- * Represents a concrete handler maintaining processor instance. This class
- * wraps the particular processor instance and forwards generalized invokations
- * from pipeline to particular processor types.
- * */
-template< typename MessageT
-        , typename DesiredProcessingResultT
-        , typename RealProcessingResultT
-        , typename ProcessorT
-        , template< typename TMsgT
-                  , typename TProcResT> class TAbstractHandlerT
-        >
-class PipelineHandler : public TAbstractHandlerT< MessageT
-                                                , DesiredProcessingResultT>
-                      , public HandlerResultConverter<DesiredProcessingResultT, RealProcessingResultT> {
-public:
-    typedef MessageT Message;
-    typedef DesiredProcessingResultT ProcRes;
-    typedef ProcessorT Processor;
-    typedef TAbstractHandlerT<Message, DesiredProcessingResultT> Parent;
-    typedef typename std::conditional<std::is_function<Processor>::value,
-                                      ProcessorT,
-                                      ProcessorT&>::type ProcessorRef;
-    typedef HandlerResultConverter<DesiredProcessingResultT, RealProcessingResultT> ThisHandlerResultConverter;
-private:
-    ProcessorRef _p;
-public:
-    PipelineHandler( ProcessorRef p ) :_p(p) {}
-    virtual ProcRes process( Message & m )
-                { return ThisHandlerResultConverter::convert_result(_p( m )); }
-    ProcessorRef processor() { return _p; }
-    const ProcessorRef processor() const { return _p; }
-};
-
-// Template specialization for processor returning the same result as expected
-// by pipeline.
-template< typename MessageT
-        , typename ProcessingResultT
-        , typename ProcessorT
-        , template< typename TMsgT
-                  , typename TProcResT> class TAbstractHandlerT
-        >
-class PipelineHandler< MessageT
-                     , ProcessingResultT
-                     , ProcessingResultT
-                     , ProcessorT
-                     , TAbstractHandlerT> : public TAbstractHandlerT< MessageT
-                                                             , ProcessingResultT> {
-public:
-    typedef MessageT Message;
-    typedef ProcessingResultT ProcRes;
-    typedef ProcessorT Processor;
-    typedef TAbstractHandlerT<Message, ProcRes> Parent;
-    typedef typename std::conditional<std::is_function<Processor>::value,
-                                      ProcessorT,
-                                      ProcessorT&>::type ProcessorRef;
-private:
-    ProcessorRef _p;
-public:
-    PipelineHandler( ProcessorRef p ) : _p(p) {}
-    virtual ProcRes process( Message & m ) override { return _p( m ); }
-    ProcessorRef processor() { return _p; }
-    const ProcessorRef processor() const { return _p; }
-};  // class PipelineHandler
-
-
-/**@brief Auxilliary scope-like struct containing key types for pipeline
- *        classes.
- * @class PipelineTraitsT
- *
- * The type traits is a common technique to summarize large set of C++ template
- * parameters in a neat manner.
- *
- * For instance, see: http://www.drdobbs.com/cpp/c-type-traits/184404270
- *
- * This interim traits are designed for BasicPipeline primitive template class.
- *
- * The PipelineProcResT type has to be compy-constructible.
- * The MessageT type has no any special restrictions.
- * The ProcResT type has to be copy-constructible.
- * */
-template< typename MessageT
-        , typename ProcResT
-        , typename PipelineProcResT
-        , template<typename T> class TChainT=aux::STLAllocatedVector >
-struct PipelineTraits {
-    /// Traits typedef.
-    typedef PipelineTraits<MessageT, ProcResT, PipelineProcResT, TChainT> Self;
-    /// Message type (e.g. physical event).
-    typedef MessageT   Message;
-    /// Result type, returning by handler call.
-    typedef ProcResT   ProcRes;
-    /// Result type, that shall be returned by pipeline invokation.
-    typedef PipelineProcResT PipelineProcRes;
-    /// Concrete handler interfacing type.
-    typedef aux::iPipelineHandler<Message, ProcRes> AbstractHandler;
-    /// Concrete chain interfacing type (parent for this class).
-    typedef TChainT<AbstractHandler *> Chain;
-    /// Base source interface that has to be implemented.
-    struct ISource {
-        virtual Message * next( ) = 0;
-    };  // class ISource
-    /// Interface making a decision, whether to continue processing on few
-    /// stages.
-    /// Invokation of _V_pop_result() is guaranteed at the ending of processing
-    /// loop.
-    class IArbiter {
-    protected:
-        /// Shall return true if result returned by current handler allows
-        /// further propagation.
-        virtual bool _V_consider_handler_result( ProcRes ) = 0;
-        /// Shall return result considering current state and reset state.
-        virtual PipelineProcRes _V_pop_result() = 0;
-        /// Whether to retrieve next message from source and start
-        /// event propagation.
-        virtual bool _V_next_message() = 0;
-        friend class BasicPipeline<Self>;
-    };  // class IArbiter
-
-    template< typename TMsgT
-            , typename TProcResT> using AbstractHandlerTemplateClass =
-            aux::iPipelineHandler<TMsgT, TProcResT >;
-
-    /// This trait aliases a template class referencing end-point handler
-    /// template.
-    template< typename TMsgT
-            , typename TDesiredProcResT
-            , typename TRealProcResT
-            , typename TCallableT > using HandlerTemplateClass = \
-            aux::PipelineHandler< TMsgT
-                                , TDesiredProcResT
-                                , TRealProcResT
-                                , TCallableT
-                                , aux::iPipelineHandler >;
-};
-# endif
-
-
 /**@brief Strightforward pipeline template primitive.
  * @class BasicPipeline
  *
  * This is the basic implementation of pipeline that performs sequential
- * invokation of processing atoms stored at ordered container, guided by
+ * invocation of processing atoms stored at ordered container, guided by
  * arbitering class.
  * */
 template< typename MessageT
@@ -388,10 +273,14 @@ public:
         return a.pop_result();
     }
     /// Shortcut for inserting processor at the back of pipeline.
-    template<typename CallableT>
-    void push_back( CallableT & p ) {
+    template<typename CallableArgT>
+    void push_back( CallableArgT && p ) {
+        //typedef typename std::conditional< std::is_reference<CallableArgT>::value
+        //                                 , typename std::remove_reference<CallableArgT>::type
+        //                                 , CallableArgT
+        //                                 > CallableType;
         Chain::push_back(
-                new typename TheHandlerTraits::template Handler<CallableT>(p) );
+                new typename TheHandlerTraits::template Handler<CallableArgT>(std::forward<CallableArgT>(p)) );
     }
     /// Call operator for single message --- to use pipeline as a processor.
     PipelineResult operator()( Message & msg ) {

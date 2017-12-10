@@ -65,9 +65,11 @@ BOOST_AUTO_TEST_SUITE( Pipeline_types )
 // type expected by the pipeline.
 BOOST_AUTO_TEST_CASE( NonwrappingHandlers ) {
     double someVal = 1.23;
+    static_assert( std::is_function<int(double &)>::value
+                 , "Compiler unable to determine function type." );
     pipet::PrimitiveHandler< double
                            , int
-                           , int(&)(double &) > h1( pipet::test::trivial_processor );
+                           , decltype(pipet::test::trivial_processor) > h1( pipet::test::trivial_processor );
     // Check, that handler #1 is really invokable:
     BOOST_CHECK( h1.process( someVal ) == 0 );
 
@@ -94,7 +96,7 @@ BOOST_AUTO_TEST_CASE( WrappingHandlers, * boost::unit_test::depends_on("Pipeline
     double someVal = 1.23;
     pipet::PrimitiveHandler< double
                                , pipet::test::ComplicatedHandlerResult
-                               , int(&)(double &) > h1( pipet::test::trivial_processor );
+                               , int(double &) > h1( pipet::test::trivial_processor );
     // Check, that handler #1 is really invokable:
     pipet::test::ComplicatedHandlerResult r = h1.process( someVal );
     BOOST_CHECK( !r.a );
@@ -103,7 +105,6 @@ BOOST_AUTO_TEST_CASE( WrappingHandlers, * boost::unit_test::depends_on("Pipeline
     pipet::PrimitiveHandler< double
                                , pipet::test::ComplicatedHandlerResult
                                , pipet::test::ProcessorClass > h2( p1 );
-
     // Check, that handler #2 is really invokable:
     r = h2.process( someVal );
     BOOST_CHECK(  r.a );

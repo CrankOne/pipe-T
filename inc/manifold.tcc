@@ -26,16 +26,21 @@
 
 # include "basic_pipeline.tcc"
 
+# include <cstdio>  // XXX
+
 # include <stack>
 # include <utility>
 
 namespace pipet {
 
 template< typename MessageT
-        , typename ResultT> class Manifold;
+        , typename ManifoldResultT
+        , template<typename T> class TChainT=aux::STLAllocatedVector>
+class Manifold;
 
 namespace aux {
 
+/// @brief Manifold evaluation steering codes.
 /// Possible result flags and composite shortcuts that may be returned by
 /// procedure. Note, that flags itself may be counter-intuitive, so better
 /// stand for shortcuts (the have RC_ prefix). Priority of treatment:
@@ -44,167 +49,128 @@ namespace aux {
 /// 2. Event abort  --- no further treatment of current shall be performed.
 /// No modification have to be considered.
 /// 3. Modification --- shall propagate modified flag to caller.
-/// 4. Discriminate --- shall pull out the event/sub-event/sample. Arbiter,
-/// depending of its modification, may keep process this event.
 /// Note: all modification will be refused upon abort/discrimination.
 enum ManifoldRC : int8_t {
-    RC_AbortAll     = 0x0,
-    kNextMessage    = 0x1,
-    kNextHandler    = 0x2,
-    kForkFilled     = 0x4,
-    RC_Continue     = kNextMessage | kNextHandler
-};
-
-# if 0
-template<typename MessageT>
-struct iManifoldProcessor {
-public:
-    typedef MessageT Message;
-public:
-    virtual ManifoldRC operator()( Message & ) = 0;
-};
-# endif
-
-# if 1
-template< typename MessageT
-        , typename DesiredProcessingResultT
-        , typename RealProcessingResultT
-        , typename ProcessorT>
-class ManifoldHandler : public PipelineHandler< MessageT
-                                              , DesiredProcessingResultT
-                                              , RealProcessingResultT
-                                              , ProcessorT> {
-public:
-    typedef PipelineHandler< MessageT
-                           , DesiredProcessingResultT
-                           , RealProcessingResultT
-                           , ProcessorT> Parent;
-    typedef typename Parent::Message Message;
-    typedef DesiredProcessingResultT ProcRes;
-    typedef ProcessorT Processor;
-    typedef typename Parent::ProcessorRef ProcessorRef;
-public:
-    ManifoldHandler( ProcessorRef p ) : Parent(p) {}
-};
-# endif
-
-template< typename MessageT
-        , typename ManifoldResultT
-        , template<typename T> class TChainT=aux::STLAllocatedVector>
-struct ManifoldTraits : protected PipelineTraits< MessageT
-                                                , ManifoldRC
-                                                , ManifoldResultT > {
-    /// Self traits typedef.
-    typedef ManifoldTraits<MessageT, ManifoldResultT> Self;
-    /// Parent (hidden) typedef.
-    typedef PipelineTraits< MessageT
-                          , ManifoldRC
-                          , ManifoldResultT > Parent;
-    /// Message type (e.g. physical event).
-    typedef typename Parent::Message   Message;
-    /// Result type, returning by handler call.
-    typedef typename Parent::ProcRes   ProcRes;
-    /// Result type, that shall be returned by pipeline invokation.
-    typedef typename Parent::PipelineProcRes PipelineProcRes;
-    /// Base source interface that has to be implemented.
-    typedef typename Parent::ISource ISource;
-    // Concrete handler interfacing type.
-    class AbstractHandler : public Parent::AbstractHandler {
-    private:
-        ISource * _jSrc;
-    public:
-        //Handler( Processor * p ) : aux::PipelineHandler<Self>( p ) {
-        //    _jSrc = dynamic_cast<ISource *>(p);
-        //}
-        /// Will return pointer to junction as a source.
-        virtual ISource * junction_ptr() {
-            return _jSrc;
-        }
-    };
-    /// Concrete chain interfacing type (parent for this class).
-    typedef TChainT<AbstractHandler *> Chain;
-    /// This IArbiter interface introduces additional is_fork_filled() method
-    /// that returns true, if latest handler result raised the JUNCTION_DONE
-    /// flag.
-    struct IArbiter : public Parent::IArbiter {
-    private:
-        bool _doAbort
-           , _doSkip
-           , _forkFilled
-           ;
-    protected:
-        virtual void _reset_flags() {
-            _doAbort = _doSkip = _forkFilled = false;
-        }
-        //virtual PipelineProcRes _V_
-    public:
-        /// Causes transitions
-        virtual bool _V_consider_handler_result( ManifoldRC fs ) override {
-            _doAbort = !((kNextMessage & fs) | (kNextHandler & fs));
-            _forkFilled = kForkFilled & fs;
-            return kNextMessage & fs;
-        }
-        virtual bool _V_next_message() override {
-            return !_doAbort;
-        }
-        virtual bool is_fork_filled() const {
-            return _forkFilled;
-        }
-        // This is the single method that has to be overriden by particular
-        // descendant.
-        //virtual PipelineProcRes _V_pop_result() = 0;
-    public:
-        bool do_skip() const { return _doSkip; }
-        bool do_abort() const { return _doAbort; }
-        friend class Manifold<Message, ManifoldResultT>;
-        friend class BasicPipeline<Self>;
-    };  // class IArbiter
-
-    /// This trait aliases a template class referencing end-point handler
-    /// template.
-    template< typename TMsgT
-            , typename TDesiredProcResT
-            , typename TRealProcResT
-            , typename TCallableT > using HandlerTemplateClass = \
-            aux::ManifoldHandler<TMsgT, TDesiredProcResT, TRealProcResT, TCallableT>;
-
-    # if 0
-    template< typename TMsgT
-            , typename TDesiredProcResT
-            , typename TRealProcResT
-            , typename TCallableT >
-    class HandlerTemplateClass : public AbstractHandler {
-    public:
-        typedef PipelineHandler< TMsgT
-                               , TDesiredProcResT
-                               , TRealProcResT
-                               , TCallableT > Parent;
-        typedef typename Parent::Message Message;
-        typedef TDesiredProcResT ProcRes;
-        typedef TCallableT Processor;
-        typedef typename Parent::ProcessorRef ProcessorRef;
-    public:
-        HandlerTemplateClass( ProcessorRef p ) : Parent(p) {}
-    };
-    # endif
-};
-
-
-template<>
-struct HandlerResultConverter<ManifoldRC, void> {
-    virtual ManifoldRC convert_result( void ) {
-        return RC_Continue;
-    }
-};
-
-template<>
-struct HandlerResultConverter<ManifoldRC, bool> {
-    virtual ManifoldRC convert_result( bool v ) {
-        return v ? RC_Continue : kNextMessage;
-    }
+    RC_AbortAll = 0x0,
+    kNextMessage = 0x1,
+    kNextHandler = 0x2,
+    kForkFilled = 0x4,
+    RC_Continue = kNextMessage | kNextHandler
 };
 
 }  // namespace aux
+
+/// This template provides extended base for handlers inside the manifold
+/// pipeline assembly.
+template< typename MessageT
+        , typename ResultT>
+class iManifoldHandler : public iBasicHandler<MessageT, ResultT> {
+public:
+    typedef interfaces::Source<MessageT> ISource;
+    typedef iBasicHandler<MessageT, ResultT> Parent;
+    typedef typename Parent::Message Message;
+private:
+    ISource * _castCache;
+protected:
+    template< typename T>
+    typename std::enable_if<std::is_polymorphic<T>::value, ISource *>::type _junction_ptr( T & srcRef ) {
+        return dynamic_cast<ISource*>(& srcRef);
+    }
+    template< typename T>
+    typename std::enable_if<!std::is_polymorphic<T>::value, ISource *>::type _junction_ptr( T & ) {
+        printf( ">>> %s\n", __PRETTY_FUNCTION__ );
+        // This is a function, can not be casted to ISource type anyway.
+        return nullptr;
+    }
+public:
+    iManifoldHandler() : _castCache(nullptr) {}
+    template<typename T> iManifoldHandler( T & cRef )
+                    : Parent(cRef)
+                    , _castCache( _junction_ptr( cRef ) ) {
+    }
+
+    /// Returns nullptr for handlers that aren't fork/junction processors.
+    virtual ISource * junction_ptr() {
+        return _castCache;
+    }
+};  // class iManifoldHandler
+
+namespace interfaces {
+
+template<typename ManifoldResT>
+struct ManifoldArbiter : public Arbiter<aux::ManifoldRC, ManifoldResT> {
+private:
+    bool _doAbort
+       , _doSkip
+       , _forkFilled
+       ;
+protected:
+    virtual void _reset_flags() {
+        _doAbort = _doSkip = _forkFilled = false;
+    }
+public:
+    /// Causes transitions
+    virtual bool consider_handler_result( aux::ManifoldRC fs ) override {
+        _doAbort = !((aux::kNextMessage & fs) | (aux::kNextHandler & fs));
+        _forkFilled = aux::kForkFilled & fs;
+        return aux::kNextMessage & fs;
+    }
+    virtual bool next_message() override {
+        return !_doAbort;
+    }
+    virtual bool is_fork_filled() const {
+        return _forkFilled;
+    }
+    // This is the single method that has to be overriden by particular
+    // descendant.
+    //virtual ManifoldResT pop_result() = (0, inherited);
+public:
+    bool do_skip() const { return _doSkip; }
+    bool do_abort() const { return _doAbort; }
+};
+
+}
+
+template<typename MessageT>
+struct HandlerTraits<MessageT, aux::ManifoldRC, iManifoldHandler> {
+    typedef MessageT Message;
+    typedef aux::ManifoldRC HandlerResult;
+    typedef iManifoldHandler<Message, HandlerResult> AbstractHandler;
+    typedef AbstractHandler *AbstractHandlerRef;
+
+    //template<typename CallableT> using Handler = PrimitiveHandler< Message
+    //                                                             , HandlerResult
+    //                                                             , CallableT
+    //                                                             , iManifoldHandler >;
+    template<typename CallableT>
+    class Handler : public PrimitiveHandler<Message
+                                           , HandlerResult
+                                           , CallableT
+                                           , iManifoldHandler> {
+    public:
+        typedef PrimitiveHandler<Message
+                                , HandlerResult
+                                , CallableT
+                                , iManifoldHandler> Parent;
+        typedef typename Parent::CallableRef CallableRef;
+    public:
+        Handler( CallableRef pRef ) : Parent( pRef ) {}
+    };
+};
+
+template<>
+struct HandlerResultConverter<aux::ManifoldRC, void> {
+    virtual aux::ManifoldRC convert( void ) {
+        return aux::RC_Continue;
+    }
+};
+
+template<>
+struct HandlerResultConverter<aux::ManifoldRC, bool> {
+    virtual aux::ManifoldRC convert( bool v ) {
+        return v ? aux::RC_Continue : aux::kNextMessage;
+    }
+};
 
 /**@brief Assembly of pipelines with elaborated composition management.
  * @class Manifold
@@ -214,22 +180,27 @@ struct HandlerResultConverter<ManifoldRC, bool> {
  * auxilliary handlers.
  * */
 template< typename MessageT
-        , typename ResultT>
-class Manifold : public BasicPipeline< aux::ManifoldTraits< MessageT
-                                                     , ResultT
-                                                     >
-                                > {
+        , typename ManifoldResultT
+        , template<typename T> class TChainT>
+class Manifold : public PrimitivePipe< MessageT
+                                     , aux::ManifoldRC
+                                     , ManifoldResultT
+                                     , iManifoldHandler
+                                     , TChainT
+                                     > {
 public:
-    typedef aux::ManifoldTraits<MessageT, ResultT> Traits;
-    typedef BasicPipeline< aux::ManifoldTraits<MessageT, ResultT> > Parent;
-    typedef typename Traits::Message   Message;
-    typedef typename Traits::ProcRes   ProcRes;
-    typedef typename Traits::PipelineProcRes PipelineProcRes;
-    typedef typename Traits::AbstractHandler   AbstractHandler;
-    typedef typename Traits::Chain     Chain;
-    typedef typename Traits::ISource   ISource;
-    typedef typename Traits::IArbiter  IArbiter;
-    typedef Manifold<Message, PipelineProcRes> Self;
+    typedef PrimitivePipe< MessageT
+                         , aux::ManifoldRC
+                         , ManifoldResultT
+                         , iManifoldHandler
+                         , TChainT> Parent;
+    typedef typename Parent::TheHandlerTraits   TheHandlerTraits;
+    typedef typename Parent::Message            Message;
+    typedef typename Parent::ISource            ISource;
+    typedef interfaces::ManifoldArbiter<ManifoldResultT> IArbiter;
+    typedef typename Parent::Chain              Chain;
+    typedef typename TheHandlerTraits::AbstractHandler AbstractHandler;
+    // ...
 
     class SingularSource : public ISource {
     private:
@@ -249,13 +220,13 @@ public:
     Manifold( IArbiter * a ) : Parent( a ) {}
     /// Manifold overloads the source processing method to support fork/junction
     /// processing.
-    virtual PipelineProcRes process( ISource & src ) override {
+    virtual ManifoldResultT process( ISource & src ) override {
         if( ! this->arbiter_ptr() ) {
             pipet_error( Uninitialized, "Arbiter object pointer is not set for "
-                    "pipeline instance %p while process() was invoked.",
+                    "manifold instance %p while process() was invoked.",
                     this );
         }
-        IArbiter & a = *(this->arbiter_ptr());
+        IArbiter & a = static_cast<IArbiter&>(*(this->arbiter_ptr()));
         // Check if we actually have something to do
         if( Chain::empty() ) {
             pipet_error( EmptyManifold, "Manifold instance %p has no handlers set.",
@@ -282,9 +253,10 @@ public:
                 for( handlerIt = procStart
                    ; handlerIt != Chain::end()
                    ; ++handlerIt ) {
+                    AbstractHandler & h = **handlerIt;
                     // Process message with current handler and consider result.
-                    if( a._V_consider_handler_result( handlerIt->process( *msg ) ) ) {
-                        // _V_consider_handler_result() returned true, what means we
+                    if( a.consider_handler_result( h.process( *msg ) ) ) {
+                        // consider_handler_result() returned true, what means we
                         // can propagate further along the handlers chain.
                         continue;
                     }
@@ -295,25 +267,38 @@ public:
                         // Fork was filled and junction has merged events. It
                         // means that we have to proceed with events that were put
                         // in "junction" queue as if it is an event source.
-                        sourcesStack.push(
-                            std::make_pair( handlerIt->junction_ptr(), ++handlerIt) );
+                        # ifndef NDEBUG
+                        if( !h.junction_ptr() ) {
+                            // This excepetion matters since we're dealing with
+                            // potentially customized behaviour (f/j behaviour
+                            // may be re-defined at upper levels).
+                            pipet_error( Malfunction, "Handler %p can not act "
+                                    "as an event source, but had returned the "
+                                    "\"fork finalized\" code.",
+                                    this );  // TODO: try to get class name
+                        }
+                        # endif
+                        if( h.junction_ptr() != sourcesStack.top().first ) {
+                            sourcesStack.push(
+                                    std::make_pair(h.junction_ptr(), ++handlerIt));
+                        }
                     }
                     break;
                 }
             }
-            if( a._V_next_message() ) {
+            if( a.next_message() ) {
                 // We have to take next (newly-created) source from internal
                 // queue and proceed with it.
                 break;
             }
         }
-        return a._V_pop_result();
+        return a.pop_result();
     }
     /// Single message will be processed as a (temporary) messages source
     /// containing only one event.
-    virtual PipelineProcRes process( Message & msg ) override {
+    virtual ManifoldResultT process( Message & msg ) override {
         auto tSrc = SingularSource(msg);
-        auto res = Self::process( tSrc );
+        auto res = process( tSrc );
         return res;
     }
 };  // class ForkProcessor

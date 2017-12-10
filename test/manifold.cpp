@@ -20,7 +20,7 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-# if 0
+# if 1
 # include "manifold.tcc"
 
 # define BOOST_TEST_NO_MAIN
@@ -64,6 +64,7 @@ private:
     int _prevNum;
 public:
     OrderCheck() : _prevNum(0) {}
+    OrderCheck( const OrderCheck & ) = delete;
     bool operator()(Message & msg) {  // TODO: bool -> void
         BOOST_CHECK( msg.id - 1 == _prevNum );
         _prevNum = msg.id;
@@ -73,7 +74,7 @@ public:
     void reset() { _prevNum = 0; }
 };
 
-// Processor mimicing the fork/junction manifold.
+// Processor mimicking the fork/junction manifold.
 class ForkMimic : public TestingManifold::ISource {
 private:
     int _nAcc;
@@ -105,11 +106,16 @@ public:
         _it = _acc.end();
         return nullptr;
     }
+
+    void reset() {
+        _acc.clear();
+        _it = _acc.end();
+    }
 };
 
 class ManifoldArbiter : public TestingManifold::IArbiter {
 protected:
-    virtual int _V_pop_result() override {
+    virtual int pop_result() override {
         Parent::_reset_flags();
         // ?
         return 0;
@@ -120,12 +126,12 @@ public:
 
 // Testing source, emitting messages with id set to the simple increasing
 // natural series.
-class TestingSource : public TestingManifold::ISource {
+class TestingSource2 : public TestingManifold::ISource {
 private:
     size_t _nMsgsMax;
     Message _reentrantMessage;
 public:
-    TestingSource(size_t nMsgsMax) : _nMsgsMax( nMsgsMax )
+    TestingSource2(size_t nMsgsMax) : _nMsgsMax( nMsgsMax )
                                    , _reentrantMessage {0} {}
     virtual Message * next() override {
         if( ++ _reentrantMessage.id > _nMsgsMax ) {
@@ -135,35 +141,88 @@ public:
     }
 };
 
+class ManifoldTestingFixture {
+protected:
+    ManifoldArbiter _a;
+    OrderCheck _oc[3];
+    ForkMimic _fork2
+            , _fork3
+            ;
+public:
+    ManifoldTestingFixture() : _fork2(2)
+                             , _fork3(3)
+                             {}
+    ~ManifoldTestingFixture() {}
+};
+
 }  // namespace test
 }  // namespace pipet
 
 //
 // Test suite
 
-BOOST_AUTO_TEST_SUITE( Pipeline_suite )
+BOOST_FIXTURE_TEST_SUITE( manifoldSuite, pipet::test::ManifoldTestingFixture )
 
-BOOST_AUTO_TEST_CASE( ManifoldPipelineTC ) {
-
-    pipet::test::ManifoldArbiter a;
-    pipet::test::TestingManifold mf(&a);
-
-    pipet::test::OrderCheck oc1, oc2;
-    pipet::test::ForkMimic fm1(3), fm2(2);
-
-    mf.push_back( oc1 );
-    mf.push_back( fm1 );
-    mf.push_back( fm2 );
-    mf.push_back( oc2 );
-
+// Simplest test case. Just composes manifold of 3 trivial always-forwarding
+// processors to check that main Manifold processing loop actually able to
+// propagate messages.
+BOOST_AUTO_TEST_CASE( simplePropagation ) {
+    pipet::test::TestingManifold mf(&_a);
+    mf.push_back( _oc[0] );
+    mf.push_back( _oc[1] );
+    mf.push_back( _oc[2] );
     for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
-        pipet::test::TestingSource src(nMsgsMax);
+        pipet::test::TestingSource2 src(nMsgsMax);
         mf.process( src );
         // Check that ALL the messages have passed throught the manifold.
-        BOOST_CHECK( nMsgsMax - 1 == oc1.latest_id() );
-        BOOST_CHECK( nMsgsMax - 1 == oc2.latest_id() );
-        oc1.reset();
-        oc2.reset();
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[2].latest_id() );
+        _oc[0].reset();
+        _oc[1].reset();
+        _oc[2].reset();
+    }
+}
+
+// A bit more elaborated (than simplePropagation) test case. Puts a simple
+// fork/junction handler of capacity 2 between two message counters to check
+// that f/j handler is able to do its job.
+BOOST_AUTO_TEST_CASE( simpleFork
+                    , *boost::unit_test::depends_on("manifoldSuite/simplePropagation") ) {
+    pipet::test::TestingManifold mf(&_a);
+    mf.push_back( _oc[0] );
+    mf.push_back( _fork2 );
+    mf.push_back( _oc[1] );
+    for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
+        pipet::test::TestingSource2 src(nMsgsMax);
+        mf.process( src );
+        // Check that ALL the messages have passed throught the manifold.
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
+        _oc[0].reset();
+        _oc[1].reset();
+        _fork2.reset();
+    }
+}
+
+BOOST_AUTO_TEST_CASE( forks3to2
+                    , *boost::unit_test::depends_on("manifoldSuite/simpleFork") ) {
+    pipet::test::TestingManifold mf(&_a);
+    mf.push_back( _oc[0] );
+    mf.push_back( _fork3 );
+    mf.push_back( _fork2 );
+    mf.push_back( _oc[1] );
+
+    for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
+        pipet::test::TestingSource2 src(nMsgsMax);
+        mf.process( src );
+        // Check that ALL the messages have passed throught the manifold.
+        BOOST_CHECK( nMsgsMax == _oc[0].latest_id() );
+        BOOST_CHECK( nMsgsMax == _oc[1].latest_id() );
+        _oc[0].reset();
+        _oc[1].reset();
+        _fork2.reset();
+        _fork3.reset();
     }
 }
 
