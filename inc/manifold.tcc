@@ -308,6 +308,7 @@ public:
                                   << " (" << (handlerIt - Chain::begin())
                                   << ") is filling fork..." << std::endl;
                         }
+                        continue;
                     }
                     std::cout << "xxx Breaking after handler " << &h
                               << " (" << handlerIt - Chain::begin()

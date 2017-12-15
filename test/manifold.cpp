@@ -80,8 +80,9 @@ private:
     int _nAcc;
     std::vector<Message> _acc;
     Message _cMsg;
+    bool _wasFull;
 public:
-    ForkMimic( int nAcc ) : _nAcc(nAcc)
+    ForkMimic( int nAcc ) : _nAcc(nAcc), _wasFull(false)
         { _acc.reserve(_nAcc); }
 
     pipet::aux::ManifoldRC operator()(Message & msg) {
@@ -91,6 +92,7 @@ public:
         BOOST_CHECK_LT( _acc.size(), _nAcc );
         _acc.push_back( msg );
         if( _acc.size() == _nAcc ) {
+            _wasFull = true;
             return pipet::aux::RC_ForkFilled;
         }
         return pipet::aux::RC_ForkFilling;
@@ -107,7 +109,10 @@ public:
 
     void reset() {
         _acc.clear();
+        _wasFull = false;
     }
+
+    bool was_full() const { return _wasFull; }
 };
 
 class ManifoldArbiter : public TestingManifold::IArbiter {
@@ -198,6 +203,13 @@ BOOST_AUTO_TEST_CASE( simpleFork
         // Check that ALL the messages have passed through the manifold.
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
+        # if 1
+        if( nMsgsMax >= 2 ) {
+            BOOST_CHECK( _fork2.was_full() );
+        } else {
+            BOOST_CHECK( !_fork2.was_full() );
+        }
+        # endif
         _oc[0].reset();
         _oc[1].reset();
         _fork2.reset();
@@ -212,12 +224,22 @@ BOOST_AUTO_TEST_CASE( forks3to2
     mf.push_back( _fork2 );
     mf.push_back( _oc[1] );
 
-    for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
+    for( size_t nMsgsMax = 1; nMsgsMax < 4; ++nMsgsMax ) {
         pipet::test::TestingSource2 src(nMsgsMax);
         mf.process( src );
         // Check that ALL the messages have passed throught the manifold.
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
+        if( nMsgsMax >= 2 ) {
+            BOOST_CHECK( _fork2.was_full() );
+        } else {
+            BOOST_CHECK( !_fork2.was_full() );
+        }
+        if( nMsgsMax >= 3 ) {
+            BOOST_CHECK( _fork3.was_full() );
+        } else {
+            BOOST_CHECK( !_fork2.was_full() );
+        }
         _oc[0].reset();
         _oc[1].reset();
         _fork2.reset();
