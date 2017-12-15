@@ -27,6 +27,7 @@
 # include "basic_pipeline.tcc"
 
 # include <cstdio>  // XXX
+# include <iostream>  // XXX
 
 # include <stack>
 # include <utility>
@@ -51,11 +52,13 @@ namespace aux {
 /// 3. Modification --- shall propagate modified flag to caller.
 /// Note: all modification will be refused upon abort/discrimination.
 enum ManifoldRC : int8_t {
-    RC_AbortAll = 0x0,
+    RC_AbortAll  = 0x0,
     kNextMessage = 0x1,
     kNextHandler = 0x2,
-    kForkFilled = 0x4,
-    RC_Continue = kNextMessage | kNextHandler
+    kForkFill    = 0x4,
+    RC_Continue    = kNextMessage | kNextHandler,
+    RC_ForkFilling = kNextMessage | kForkFill,
+    RC_ForkFilled  = kNextHandler | kForkFill
 };
 
 }  // namespace aux
@@ -78,7 +81,7 @@ protected:
     }
     template< typename T>
     typename std::enable_if<!std::is_polymorphic<T>::value, ISource *>::type _junction_ptr( T & ) {
-        printf( ">>> %s\n", __PRETTY_FUNCTION__ );
+        //printf( ">>> %s\n", __PRETTY_FUNCTION__ );
         // This is a function, can not be casted to ISource type anyway.
         return nullptr;
     }
@@ -103,6 +106,7 @@ private:
     bool _doAbort
        , _doSkip
        , _forkFilled
+       , _forkFilling
        ;
 protected:
     virtual void _reset_flags() {
@@ -112,14 +116,27 @@ public:
     /// Causes transitions
     virtual bool consider_handler_result( aux::ManifoldRC fs ) override {
         _doAbort = !((aux::kNextMessage & fs) | (aux::kNextHandler & fs));
-        _forkFilled = aux::kForkFilled & fs;
-        return aux::kNextMessage & fs;
+        _doSkip = !(aux::kNextMessage & fs);
+        _forkFilling = aux::kForkFill & fs;
+        _forkFilled = (aux::kForkFill & fs) && (aux::kNextHandler & fs);
+        std::cout << "yyy Arbiter got handler RC="
+                  << std::hex << (int) fs
+                  << " flags: doAbort=" << (_doAbort ? "true" : "false")
+                  << ", doSkip=" << (_doSkip ? "true" : "false")
+                  << ", forkFilling=" << (_forkFilling ? "true" : "false")
+                  << ", forkFilled=" << (_forkFilled ? "true" : "false")
+                  << std::endl
+                ;
+        return aux::kNextHandler & fs;
     }
     virtual bool next_message() override {
-        return !_doAbort;
+        return !_doSkip;
     }
     virtual bool is_fork_filled() const {
         return _forkFilled;
+    }
+    virtual bool is_fork_filling() const {
+        return _forkFilling;
     }
     // This is the single method that has to be overriden by particular
     // descendant.
@@ -244,11 +261,13 @@ public:
             ISource & cSrc = *sourcesStack.top().first;
             // Iterator pointing to the current handler in chain.
             typename Chain::iterator procStart =  sourcesStack.top().second;
-            sourcesStack.pop();
             // Begin of loop iterating messages source.
-            Message * msg;
-            while(!!(msg = cSrc.next())) {
+            Message * msg;  // while(!!(msg = cSrc.next()))
+            for( msg = cSrc.next(); !! msg; msg = cSrc.next() ) {
                 typename Chain::iterator handlerIt;
+                std::cout << "xxx Operating with message " << msg
+                          << " of source " << &cSrc
+                          << std::endl;
                 // Begin of loop iterating the handlers chain.
                 for( handlerIt = procStart
                    ; handlerIt != Chain::end()
@@ -258,12 +277,15 @@ public:
                     if( a.consider_handler_result( h.process( *msg ) ) ) {
                         // consider_handler_result() returned true, what means we
                         // can propagate further along the handlers chain.
+                        std::cout << "xxx Propagating after handler " << &h
+                                  << " (" << handlerIt - Chain::begin()
+                                  << ")..." << std::endl;
                         continue;
                     }
                     // _V_consider_handler_result() returned false, that means we have
                     // to interrupt the propagation, but if we have filled the
                     // f/j handler, it must be put on top of sources stack.
-                    if( a.is_fork_filled() ) {
+                    if( a.is_fork_filling() ) {
                         // Fork was filled and junction has merged events. It
                         // means that we have to proceed with events that were put
                         // in "junction" queue as if it is an event source.
@@ -278,18 +300,30 @@ public:
                                     this );  // TODO: try to get class name
                         }
                         # endif
-                        if( h.junction_ptr() != sourcesStack.top().first ) {
-                            sourcesStack.push(
-                                    std::make_pair(h.junction_ptr(), ++handlerIt));
+                        if( sourcesStack.empty()
+                         || h.junction_ptr() != sourcesStack.top().first ) {
+                        sourcesStack.push(
+                                std::make_pair(h.junction_ptr(), handlerIt+1));
+                        std::cout << "xxx Handler " << &h
+                                  << " (" << (handlerIt - Chain::begin())
+                                  << ") is filling fork..." << std::endl;
                         }
                     }
+                    std::cout << "xxx Breaking after handler " << &h
+                              << " (" << handlerIt - Chain::begin()
+                              << ")." << std::endl;
+                    break;
+                }
+                if( a.next_message() ) {
+                    std::cout << "xxx No more messages in source " << &cSrc
+                              << std::endl;
+                    // We have to take next (newly-created) source from internal
+                    // queue and proceed with it.
                     break;
                 }
             }
-            if( a.next_message() ) {
-                // We have to take next (newly-created) source from internal
-                // queue and proceed with it.
-                break;
+            if( !msg ) {
+                sourcesStack.pop();
             }
         }
         return a.pop_result();

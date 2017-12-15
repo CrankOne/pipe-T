@@ -66,7 +66,7 @@ public:
     OrderCheck() : _prevNum(0) {}
     OrderCheck( const OrderCheck & ) = delete;
     bool operator()(Message & msg) {  // TODO: bool -> void
-        BOOST_CHECK( msg.id - 1 == _prevNum );
+        BOOST_CHECK_EQUAL( msg.id - 1, _prevNum );
         _prevNum = msg.id;
         return true;  // XXX
     }
@@ -79,37 +79,34 @@ class ForkMimic : public TestingManifold::ISource {
 private:
     int _nAcc;
     std::vector<Message> _acc;
-    std::vector<Message>::iterator _it;
+    Message _cMsg;
 public:
     ForkMimic( int nAcc ) : _nAcc(nAcc)
-                          , _it(_acc.end())
         { _acc.reserve(_nAcc); }
 
     pipet::aux::ManifoldRC operator()(Message & msg) {
         // We aborting propagation here until the fork is filled. Upon
         // latest event comes, we return 'fork filled' flag, causing iterating
         // loop to continue propagation from this fork as the messages source.
-        BOOST_CHECK( _acc.size() < _nAcc );
+        BOOST_CHECK_LT( _acc.size(), _nAcc );
         _acc.push_back( msg );
         if( _acc.size() == _nAcc ) {
-            _it = _acc.begin();
-            return pipet::aux::kForkFilled;
+            return pipet::aux::RC_ForkFilled;
         }
-        return pipet::aux::kNextMessage;
+        return pipet::aux::RC_ForkFilling;
     }
 
     virtual Message * next() override {
-        if( _it != _acc.end() ) {
-            return &(*(_it++));
+        if( !_acc.empty() ) {
+            _cMsg = *_acc.begin();
+            _acc.erase(_acc.begin());
+            return &_cMsg;
         }
-        _acc.clear();
-        _it = _acc.end();
         return nullptr;
     }
 
     void reset() {
         _acc.clear();
-        _it = _acc.end();
     }
 };
 
@@ -144,13 +141,15 @@ public:
 class ManifoldTestingFixture {
 protected:
     ManifoldArbiter _a;
-    OrderCheck _oc[3];
+    OrderCheck _oc[4];
     ForkMimic _fork2
             , _fork3
+            , _fork4
             ;
 public:
     ManifoldTestingFixture() : _fork2(2)
                              , _fork3(3)
+                             , _fork4(4)
                              {}
     ~ManifoldTestingFixture() {}
 };
@@ -196,7 +195,7 @@ BOOST_AUTO_TEST_CASE( simpleFork
     for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
         pipet::test::TestingSource2 src(nMsgsMax);
         mf.process( src );
-        // Check that ALL the messages have passed throught the manifold.
+        // Check that ALL the messages have passed through the manifold.
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         _oc[0].reset();
@@ -217,12 +216,62 @@ BOOST_AUTO_TEST_CASE( forks3to2
         pipet::test::TestingSource2 src(nMsgsMax);
         mf.process( src );
         // Check that ALL the messages have passed throught the manifold.
-        BOOST_CHECK( nMsgsMax == _oc[0].latest_id() );
-        BOOST_CHECK( nMsgsMax == _oc[1].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         _oc[0].reset();
         _oc[1].reset();
         _fork2.reset();
         _fork3.reset();
+    }
+}
+
+BOOST_AUTO_TEST_CASE( forks2to3
+                    , *boost::unit_test::depends_on("manifoldSuite/simpleFork") ) {
+    pipet::test::TestingManifold mf(&_a);
+    mf.push_back( _oc[0] );
+    mf.push_back( _fork2 );
+    mf.push_back( _fork3 );
+    mf.push_back( _oc[1] );
+
+    for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
+        pipet::test::TestingSource2 src(nMsgsMax);
+        mf.process( src );
+        // Check that ALL the messages have passed throught the manifold.
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
+        _oc[0].reset();
+        _oc[1].reset();
+        _fork3.reset();
+        _fork2.reset();
+    }
+}
+
+BOOST_AUTO_TEST_CASE( combinedForks
+                    , *boost::unit_test::depends_on("manifoldSuite/forks3to2") ) {
+    pipet::test::TestingManifold mf(&_a);
+    mf.push_back( _oc[0] );
+    mf.push_back( _fork4 );
+    mf.push_back( _oc[1] );
+    mf.push_back( _fork2 );
+    mf.push_back( _oc[2] );
+    mf.push_back( _fork3 );
+    mf.push_back( _oc[3] );
+
+    for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
+        pipet::test::TestingSource2 src(nMsgsMax);
+        mf.process( src );
+        // Check that ALL the messages have passed throught the manifold.
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[2].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[3].latest_id() );
+        _oc[0].reset();
+        _oc[1].reset();
+        _oc[2].reset();
+        _oc[3].reset();
+        _fork2.reset();
+        _fork3.reset();
+        _fork4.reset();
     }
 }
 

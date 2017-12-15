@@ -126,13 +126,16 @@ template< typename CallableT > typename aux::CallableTraits< CallableT
                                                            , MessageT
                                                            >::CallableRef
 iBasicHandler<MessageT, ProcessingResultT>::processor() {
-    auto hPtr = dynamic_cast<PrimitiveHandler< Message
-                                             , Result
-                                             , CallableT
-                                             > * >(this);
+    typedef PrimitiveHandler< Message
+            , Result
+            , CallableT
+            > TargetHandlerType;
+    auto hPtr = dynamic_cast<TargetHandlerType *>(this);
     if( !hPtr ) {
         pipet_error( BadCast, "Handler type cast mismatch. Requesting "
-                "processor handle." );
+                "processor handle of type %s while real handler is of type %s."
+            , typeid(TargetHandlerType).name()
+            , typeid(hPtr).name());
     }
     return hPtr->processor();
 };
@@ -275,12 +278,9 @@ public:
     /// Shortcut for inserting processor at the back of pipeline.
     template<typename CallableArgT>
     void push_back( CallableArgT && p ) {
-        //typedef typename std::conditional< std::is_reference<CallableArgT>::value
-        //                                 , typename std::remove_reference<CallableArgT>::type
-        //                                 , CallableArgT
-        //                                 > CallableType;
+        typedef typename std::remove_reference<CallableArgT>::type CallableType;
         Chain::push_back(
-                new typename TheHandlerTraits::template Handler<CallableArgT>(std::forward<CallableArgT>(p)) );
+                new typename TheHandlerTraits::template Handler<CallableType>(p) );
     }
     /// Call operator for single message --- to use pipeline as a processor.
     PipelineResult operator()( Message & msg ) {
