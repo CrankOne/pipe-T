@@ -110,7 +110,7 @@ private:
        ;
 protected:
     virtual void _reset_flags() {
-        _doAbort = _doSkip = _forkFilled = false;
+        _doAbort = _forkFilling = _doSkip = _forkFilled = false;
     }
 public:
     /// Causes transitions
@@ -119,7 +119,7 @@ public:
         _doSkip = !(aux::kNextMessage & fs);
         _forkFilling = aux::kForkFill & fs;
         _forkFilled = (aux::kForkFill & fs) && (aux::kNextHandler & fs);
-        std::cout << "yyy Arbiter got handler RC="
+        std::cout << "--- --- arb got handler RC="
                   << std::hex << (int) fs
                   << " flags: doAbort=" << (_doAbort ? "true" : "false")
                   << ", doSkip=" << (_doSkip ? "true" : "false")
@@ -263,9 +263,9 @@ public:
             typename Chain::iterator procStart =  sourcesStack.top().second;
             // Begin of loop iterating messages source.
             Message * msg;  // while(!!(msg = cSrc.next()))
-            for( msg = cSrc.next(); !! msg; msg = cSrc.next() ) {
+            for( msg = cSrc.next(); msg; msg = cSrc.next() ) {
                 typename Chain::iterator handlerIt;
-                std::cout << "xxx Operating with message " << msg
+                std::cout << "xxx ... ... Operating with message " << msg
                           << " of source " << &cSrc
                           << std::endl;
                 // Begin of loop iterating the handlers chain.
@@ -277,56 +277,62 @@ public:
                     if( a.consider_handler_result( h.process( *msg ) ) ) {
                         // consider_handler_result() returned true, what means we
                         // can propagate further along the handlers chain.
-                        std::cout << "xxx Propagating after handler " << &h
+                        std::cout << "xxx ... ... ... Propagating after handler " << &h
                                   << " (" << handlerIt - Chain::begin()
-                                  << ")..." << std::endl;
-                        continue;
+                                  << ")" << std::endl;
+                        if( a.is_fork_filled() ){
+                            // Fork was filled and junction has merged events. It
+                            // means that we have to proceed with events that were put
+                            // in "junction" queue as if it is an event source.
+                            # ifndef NDEBUG
+                            if( !h.junction_ptr() ) {
+                                // This excepetion matters since we're dealing with
+                                // potentially customized behaviour (f/j behaviour
+                                // may be re-defined at upper levels).
+                                pipet_error( Malfunction, "Handler %p (%zu in "
+                                        "chain) can not act as an event source, "
+                                        "but had returned the "
+                                        "\"fork finalized\" code.",
+                                        this, handlerIt - Chain::begin() );
+                                // TODO: ^^^ try to get class name
+                            }
+                            # endif
+                            sourcesStack.push(
+                                    std::make_pair(h.junction_ptr(), handlerIt+1));
+                            std::cout << "xxx ... ... ... Fork handler " << &h
+                                      << " (" << (handlerIt - Chain::begin())
+                                      << ") has been filled : PUSH" << std::endl;
+                            break;  // get to the source-iterating loop
+                        }
+                        continue;  // next handler
                     }
                     // _V_consider_handler_result() returned false, that means we have
                     // to interrupt the propagation, but if we have filled the
                     // f/j handler, it must be put on top of sources stack.
-                    if( a.is_fork_filling() ) {
-                        // Fork was filled and junction has merged events. It
-                        // means that we have to proceed with events that were put
-                        // in "junction" queue as if it is an event source.
-                        # ifndef NDEBUG
-                        if( !h.junction_ptr() ) {
-                            // This excepetion matters since we're dealing with
-                            // potentially customized behaviour (f/j behaviour
-                            // may be re-defined at upper levels).
-                            pipet_error( Malfunction, "Handler %p can not act "
-                                    "as an event source, but had returned the "
-                                    "\"fork finalized\" code.",
-                                    this );  // TODO: try to get class name
-                        }
-                        # endif
-                        if( sourcesStack.empty()
-                         || h.junction_ptr() != sourcesStack.top().first ) {
-                        sourcesStack.push(
-                                std::make_pair(h.junction_ptr(), handlerIt+1));
-                        std::cout << "xxx Handler " << &h
-                                  << " (" << (handlerIt - Chain::begin())
-                                  << ") is filling fork..." << std::endl;
-                        }
-                        continue;
-                    }
-                    std::cout << "xxx Breaking after handler " << &h
+                    std::cout << "xxx ... ... ... Breaking after handler " << &h
                               << " (" << handlerIt - Chain::begin()
                               << ")." << std::endl;
                     break;
-                }
-                if( a.next_message() ) {
-                    std::cout << "xxx No more messages in source " << &cSrc
+                }  // handler iteration loop
+                if( !a.next_message() ) {
+                    std::cout << "xxx ... ... Arbiter stop with source " << &cSrc
                               << std::endl;
                     // We have to take next (newly-created) source from internal
                     // queue and proceed with it.
                     break;
                 }
             }
-            if( !msg ) {
+            if(!msg) {
                 sourcesStack.pop();
+                std::cout << "xxx ... Source "
+                          << (void *) &cSrc
+                          << " on handler " << (void *) &(*procStart) << " ("
+                          << procStart - Chain::begin()
+                          << ") "
+                          << " POP" << std::endl;
             }
         }
+        std::cout << "xxx * Done with source " << (void *) &src << std::endl;
         return a.pop_result();
     }
     /// Single message will be processed as a (temporary) messages source
