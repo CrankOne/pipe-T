@@ -90,6 +90,9 @@ template< typename CallableT
     typedef CallableT & CallableRef;
 };  // CallableTraits (classes)
 
+template<typename SourceT>
+struct SourceTraits;  // TODO
+
 }  // namespace aux
 
 /// The most basic pipeline handler class. Is an abstract base for linear
@@ -192,6 +195,14 @@ struct HandlerTraits< MessageT
     typedef iBasicHandler<Message, HandlerResult>   AbstractHandler;
     typedef AbstractHandler *                       AbstractHandlerRef;
     template<typename CallableT> using Handler = PrimitiveHandler<Message, HandlerResult, CallableT>;
+
+    template< typename LoopResultT
+            , typename SourceT
+            , template <template<typename, typename> class, typename...> class ChainT
+            , typename... PipelineT>
+    static LoopResultT process(interfaces::Arbiter<HandlerResult, LoopResultT> &a
+                               , ChainT<iBasicHandler, PipelineT...> &chain
+                               , SourceT &src);
 };
 
 /**@brief Strightforward pipeline template primitive.
@@ -201,19 +212,17 @@ struct HandlerTraits< MessageT
  * invocation of processing atoms stored at ordered container, guided by
  * arbitering class.
  * */
-template< typename MessageT
-        , typename ResultT
-        , typename PipelineResultT
-        , template< typename
+template< template< typename
                   , typename > class AbstractHandlerT
+        , typename MessageT
+        , typename ResultT
         , template<typename T> class TChainT=aux::STLAllocatedVector >
-class PrimitivePipe : public TChainT<typename HandlerTraits< MessageT
-                                                           , ResultT
-                                                           , AbstractHandlerT>::AbstractHandlerRef> {
+class Pipeline : public TChainT<typename HandlerTraits< MessageT
+                                                      , ResultT
+                                                      , AbstractHandlerT>::AbstractHandlerRef> {
 public:
     typedef MessageT                                    Message;
     typedef ResultT                                     Result;
-    typedef PipelineResultT                             PipelineResult;
     typedef HandlerTraits< Message
                          , Result
                          , AbstractHandlerT >           TheHandlerTraits;
@@ -221,59 +230,15 @@ public:
     typedef typename TheHandlerTraits::AbstractHandlerRef AbstractHandlerRef;
     typedef TChainT<AbstractHandlerRef>                 Chain;
 
-    typedef interfaces::Source<Message> ISource;
-    typedef interfaces::Arbiter<Result, PipelineResult> IArbiter;
-private:
-    IArbiter * _a;
-protected:
-    IArbiter * arbiter_ptr() { return _a; }
-    const IArbiter * arbiter_ptr() const { return _a; }
+    template<typename LoopResultT> using IArbiter = interfaces::Arbiter<Result, LoopResultT>;
 public:
     /// Ctr. Requires an arbiter instance to act.
-    PrimitivePipe( IArbiter * a ) : _a(a) {}
+    Pipeline() {}
     /// Virtual dtr (trivial).
-    virtual ~PrimitivePipe() {
+    virtual ~Pipeline() {
         for( auto & ahPtr : *static_cast<Chain *>(this) ) {
             delete ahPtr;
         }
-    }
-
-    /// Run pipeline evaluation on source.
-    virtual PipelineResult process( ISource & src ) {
-        if( ! arbiter_ptr() ) {
-            pipet_error( Uninitialized, "Arbiter object pointer is not set for "
-                    "pipeline instance %p while process() was invoked.",
-                    this );
-        }
-        IArbiter & a = *arbiter_ptr();
-        Message * msg;
-        while(!!(msg = src.next())) {
-            for( AbstractHandler * h : *static_cast<Chain*>(this) ) {
-                if( ! a.consider_handler_result( h->process(*msg) ) ) {
-                    break;
-                }
-            }
-            if( ! a.next_message() ) {
-                break;
-            }
-        }
-        return a.pop_result();
-    }
-
-    /// Run pipeline evaluation on single message.
-    virtual PipelineResult process( Message & msg ) {
-        if( ! arbiter_ptr() ) {
-            pipet_error( Uninitialized, "Arbiter object pointer is not set for "
-                    "pipeline instance %p while process() was invoked.",
-                    this );
-        }
-        IArbiter & a = *arbiter_ptr();
-        for( AbstractHandler * h : *static_cast<Chain*>(this) ) {
-            if( ! a.consider_handler_result( h->process(msg) ) ) {
-                break;
-            }
-        }
-        return a.pop_result();
     }
     /// Shortcut for inserting processor at the back of pipeline.
     template<typename CallableArgT>
@@ -282,11 +247,67 @@ public:
         Chain::push_back(
                 new typename TheHandlerTraits::template Handler<CallableType>(p) );
     }
-    /// Call operator for single message --- to use pipeline as a processor.
-    PipelineResult operator()( Message & msg ) {
-        return process( msg );
+
+    TChainT<AbstractHandlerRef> & upcast() { return *this; }
+};  // class Pipeline
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Processing routines specialization for HandlerTraits specialized for
+// iBasicHandler:
+
+/// Processing function for linear pipeline evaluating on source (generic case
+/// for iBasicHandler)
+template< typename MessageT
+        , typename HandlerResultT>
+template< typename LoopResultT
+        , typename SourceT
+        , template <template<typename, typename> class, typename...> class ChainT
+        , typename... PipelineT>
+LoopResultT HandlerTraits< MessageT
+        , HandlerResultT
+        , iBasicHandler>::process( interfaces::Arbiter< HandlerResultT
+                                                      , LoopResultT> & a
+                                 , ChainT<iBasicHandler, PipelineT...> & chain
+                                 , SourceT & src) {
+    Message * msg;
+    while(!!(msg = aux::SourceTraits<SourceT>::get_next_message() )) {
+        for( AbstractHandler * h : chain ) {
+            if( ! a.consider_handler_result( h->process(*msg) ) ) {
+                break;
+            }
+        }
+        if( ! a.next_message() ) {
+            break;
+        }
     }
-};  // class BasicPipeline
+    return a.pop_result();
+}
+
+# if 0
+/// Processing function for linear pipeline evaluating on single message
+/// (special case for iBasicHandler)
+template< typename MessageT
+        , typename HandlerResultT>
+template< typename LoopResultT
+        , template <template <typename, typename> class, typename ...> class ChainT
+        , typename... PipelineT>
+LoopResultT HandlerTraits< MessageT
+        , HandlerResultT
+        , iBasicHandler>::Evaluation< LoopResultT
+                                    , MessageT
+                                    , ChainT>::process( interfaces::Arbiter< HandlerResultT
+                                                                           , LoopResultT> &a
+                                          , ChainT<iBasicHandler, PipelineT...> &chain
+                                          , MessageT & msg) {
+    for( AbstractHandler * h : chain ) {
+        if( ! a.consider_handler_result( h->process(msg) ) ) {
+            break;
+        }
+    }
+    return a.pop_result();
+}
+# endif
 
 }  // namespace pipet
 

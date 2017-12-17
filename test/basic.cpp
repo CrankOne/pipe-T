@@ -80,14 +80,13 @@ public:
     const std::vector<int> & ids_history() const { return _idsHistory; }
 };
 
-typedef PrimitivePipe< Message
-                   , int
-                   , int
-                   , iBasicHandler > TestingPipeline;
+typedef Pipeline< iBasicHandler
+                , Message
+                , int > TestingPipeline;
 
 // Define arbiter class:
 
-class TestingArbiter : public TestingPipeline::IArbiter {
+class TestingArbiter : public TestingPipeline::IArbiter<int> {
 protected:
     size_t _nMsg;
     bool _skipNext, _abortProcessing;
@@ -126,12 +125,12 @@ public:
 
 // Define source wrapper simply iterating over gSrcMsgs array
 
-class TestingSource : public TestingPipeline::ISource {
+class TestingSource {
 private:
     Message * _latest;
 public:
     TestingSource() : _latest(gSrcMsgs) {}
-    virtual Message * next() override {
+    virtual Message * next() {
         if( _latest->id ) {
             return _latest++;
         }
@@ -152,7 +151,7 @@ BOOST_AUTO_TEST_CASE( LinearPipelineTC ) {
     pipet::test::Processor p1(0), p2(1), p3(2), p4(3);
 
     pipet::test::TestingArbiter ta;
-    pipet::test::TestingPipeline ppl( &ta );
+    pipet::test::TestingPipeline ppl;
 
     ppl.push_back( p1 );
     ppl.push_back( p2 );
@@ -161,9 +160,11 @@ BOOST_AUTO_TEST_CASE( LinearPipelineTC ) {
 
     pipet::test::TestingSource src;
 
-    int n = ppl.process(src);
+    int n = pipet::test::TestingPipeline::TheHandlerTraits::process( ta, ppl, src );
+    //int n = ppl.process(src);
     BOOST_CHECK( 4 == n );  // shall be aborted on #4
-    n = ppl.process( pipet::test::gSrcMsgs[0] );
+    n = pipet::test::TestingPipeline::TheHandlerTraits::process( ta, ppl, pipet::test::gSrcMsgs[0] );
+    //n = ppl.process( pipet::test::gSrcMsgs[0] );
     BOOST_CHECK( 0 == n );
 
     int idx1 = 0, idx2 = 0;

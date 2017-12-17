@@ -20,7 +20,7 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-# if 1
+# if 0
 # include "manifold.tcc"
 
 # define BOOST_TEST_NO_MAIN
