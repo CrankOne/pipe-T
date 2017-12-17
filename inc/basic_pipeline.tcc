@@ -90,8 +90,33 @@ template< typename CallableT
     typedef CallableT & CallableRef;
 };  // CallableTraits (classes)
 
-template<typename SourceT>
-struct SourceTraits;  // TODO
+template< typename SourceT
+        , typename MessageT>
+struct SourceTraits {
+    class Iterator {
+    private:
+        SourceT & _src;
+        typename SourceT::iterator _it;
+    public:
+        Iterator(SourceT & src) : _src(src), _it(src.begin()) {}
+        MessageT * get() { return _it != _src.end() ? &(*_it) : nullptr; }
+    };
+};
+
+template<typename MessageT>
+struct SourceTraits<MessageT &, MessageT> {
+    class Iterator {
+    private:
+        MessageT * _msg;
+    public:
+        Iterator(MessageT & msg) : _msg(&msg) {}
+        MessageT * get() {
+            MessageT * r = _msg;
+            _msg = nullptr;
+            return r;
+        }
+    };
+};
 
 }  // namespace aux
 
@@ -196,13 +221,14 @@ struct HandlerTraits< MessageT
     typedef AbstractHandler *                       AbstractHandlerRef;
     template<typename CallableT> using Handler = PrimitiveHandler<Message, HandlerResult, CallableT>;
 
-    template< typename LoopResultT
+    template< template <typename...> class ChainT
+            , typename LoopResultT
             , typename SourceT
-            , template <template<typename, typename> class, typename...> class ChainT
-            , typename... PipelineT>
+            , typename ... ChainTArgs
+            >
     static LoopResultT process(interfaces::Arbiter<HandlerResult, LoopResultT> &a
-                               , ChainT<iBasicHandler, PipelineT...> &chain
-                               , SourceT &src);
+                               , ChainT<AbstractHandlerRef, ChainTArgs...> & chain
+                               , SourceT && src);
 };
 
 /**@brief Strightforward pipeline template primitive.
@@ -260,18 +286,21 @@ public:
 /// for iBasicHandler)
 template< typename MessageT
         , typename HandlerResultT>
-template< typename LoopResultT
+template< template <typename...> class ChainT
+        , typename LoopResultT
         , typename SourceT
-        , template <template<typename, typename> class, typename...> class ChainT
-        , typename... PipelineT>
+        , typename ... ChainTArgs
+        >
 LoopResultT HandlerTraits< MessageT
         , HandlerResultT
         , iBasicHandler>::process( interfaces::Arbiter< HandlerResultT
                                                       , LoopResultT> & a
-                                 , ChainT<iBasicHandler, PipelineT...> & chain
-                                 , SourceT & src) {
+                                 , ChainT<AbstractHandlerRef, ChainTArgs...> & chain
+                                 , SourceT && src) {
+    typedef aux::SourceTraits<SourceT, MessageT> SrcTraits;
+    typename SrcTraits::Iterator it(src);
     Message * msg;
-    while(!!(msg = aux::SourceTraits<SourceT>::get_next_message() )) {
+    while( !! (msg = it.get()) ) {
         for( AbstractHandler * h : chain ) {
             if( ! a.consider_handler_result( h->process(*msg) ) ) {
                 break;

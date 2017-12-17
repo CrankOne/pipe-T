@@ -122,24 +122,28 @@ public:
     TestingArbiter() : _nMsg(0), _skipNext(false), _abortProcessing(false) {}
 };
 
-
-// Define source wrapper simply iterating over gSrcMsgs array
-
-class TestingSource {
-private:
-    Message * _latest;
-public:
-    TestingSource() : _latest(gSrcMsgs) {}
-    virtual Message * next() {
-        if( _latest->id ) {
-            return _latest++;
-        }
-        return nullptr;
-    }
-    void reset() { _latest = gSrcMsgs; }
-};
-
 }  // namespace test
+
+namespace aux {
+// Define source wrapper simply iterating over gSrcMsgs array
+template<>
+struct SourceTraits< pipet::test::Message *
+                  , pipet::test::Message> {
+    class Iterator {
+    private:
+        pipet::test::Message * _latest;
+    public:
+        Iterator(pipet::test::Message * msgs) : _latest(msgs) {}
+        virtual pipet::test::Message * get() {
+            if( _latest->id ) {
+                return _latest++;
+            }
+            return nullptr;
+        }
+    };
+};
+}  // namespace aux
+
 }  // namespace pipet
 
 //
@@ -158,19 +162,17 @@ BOOST_AUTO_TEST_CASE( LinearPipelineTC ) {
     ppl.push_back( p3 );
     ppl.push_back( p4 );
 
-    pipet::test::TestingSource src;
-
-    int n = pipet::test::TestingPipeline::TheHandlerTraits::process( ta, ppl, src );
-    //int n = ppl.process(src);
-    BOOST_CHECK( 4 == n );  // shall be aborted on #4
-    n = pipet::test::TestingPipeline::TheHandlerTraits::process( ta, ppl, pipet::test::gSrcMsgs[0] );
-    //n = ppl.process( pipet::test::gSrcMsgs[0] );
-    BOOST_CHECK( 0 == n );
+    int n = pipet::test::TestingPipeline::TheHandlerTraits::process(
+            ta, ppl.upcast(), (pipet::test::Message *) pipet::test::gSrcMsgs );
+    BOOST_CHECK_EQUAL( 4, n );  // shall be aborted on #4
+    n = pipet::test::TestingPipeline::TheHandlerTraits::process(
+            ta, ppl.upcast(), pipet::test::gSrcMsgs[0] );
+    BOOST_CHECK_EQUAL( 1, n );
 
     int idx1 = 0, idx2 = 0;
     for( const auto & h : ppl ) {
         for( auto nEv : h->processor<pipet::test::Processor>().ids_history() ) {
-            BOOST_CHECK( pipet::test::pIDS[idx1][idx2] == nEv );
+            BOOST_CHECK_EQUAL( pipet::test::pIDS[idx1][idx2], nEv );
             ++idx2;
         }
         idx2 = 0;
