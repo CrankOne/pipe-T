@@ -128,7 +128,7 @@ namespace aux {
 // Define source wrapper simply iterating over gSrcMsgs array
 template<>
 struct SourceTraits< pipet::test::Message *
-                  , pipet::test::Message> {
+                   , pipet::test::Message > {
     class Iterator {
     private:
         pipet::test::Message * _latest;

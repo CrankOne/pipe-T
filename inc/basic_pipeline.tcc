@@ -36,7 +36,7 @@ namespace interfaces {
 /// Base source interface that has to be implemented.
 template<typename MessageT>
 struct Source {
-    virtual MessageT * next() = 0;
+    virtual MessageT * get() = 0;
 };
 
 template< typename HandlerResultT
@@ -93,27 +93,40 @@ template< typename CallableT
 template< typename SourceT
         , typename MessageT>
 struct SourceTraits {
-    class Iterator {
+    class Iterator : public interfaces::Source<MessageT> {
     private:
         SourceT & _src;
         typename SourceT::iterator _it;
     public:
         Iterator(SourceT & src) : _src(src), _it(src.begin()) {}
-        MessageT * get() { return _it != _src.end() ? &(*_it) : nullptr; }
+        virtual MessageT * get() override { return _it != _src.end() ? &(*_it) : nullptr; }
     };
 };
 
 template<typename MessageT>
-struct SourceTraits<MessageT &, MessageT> {
-    class Iterator {
+struct SourceTraits<MessageT, MessageT> {
+    class Iterator : public interfaces::Source<MessageT> {
     private:
         MessageT * _msg;
     public:
         Iterator(MessageT & msg) : _msg(&msg) {}
-        MessageT * get() {
+        virtual MessageT * get() override {
             MessageT * r = _msg;
             _msg = nullptr;
             return r;
+        }
+    };
+};
+
+template<typename MessageT>
+struct SourceTraits<interfaces::Source<MessageT>, MessageT> {
+    class Iterator : public interfaces::Source<MessageT> {
+    private:
+        interfaces::Source<MessageT> * _src;
+    public:
+        Iterator(interfaces::Source<MessageT> & src) : _src(&src) {}
+        virtual MessageT * get() override {
+            return _src->get();
         }
     };
 };
@@ -208,27 +221,44 @@ template< typename MessageT
         , typename HandlerResultT
         , template< typename
                   , typename > class AbstractHandlerTemplate >
-struct HandlerTraits;
+struct HandlerTraits;  // Default is not implemented.
 
+/**@brief Linear pipeline implementation.
+ *
+ * ...
+ * */
 template< typename MessageT
         , typename HandlerResultT>
 struct HandlerTraits< MessageT
                     , HandlerResultT
                     , iBasicHandler> {
-    typedef MessageT Message;
-    typedef HandlerResultT HandlerResult;
+    typedef MessageT                                Message;
+    typedef HandlerResultT                          HandlerResult;
     typedef iBasicHandler<Message, HandlerResult>   AbstractHandler;
     typedef AbstractHandler *                       AbstractHandlerRef;
+
     template<typename CallableT> using Handler = PrimitiveHandler<Message, HandlerResult, CallableT>;
+
+    /// Major processing function performing full pipeline iterative processing
+    /// over the given source instance, with given assessing logic.
+    template< template <typename...> class ChainT
+            , typename LoopResultT
+            , typename SourceT
+            , typename ... ChainTArgs
+            >
+    static LoopResultT process( interfaces::Arbiter<HandlerResult, LoopResultT> &a
+                              , ChainT<AbstractHandlerRef, ChainTArgs...> & chain
+                              , SourceT && src );
 
     template< template <typename...> class ChainT
             , typename LoopResultT
             , typename SourceT
             , typename ... ChainTArgs
             >
-    static LoopResultT process(interfaces::Arbiter<HandlerResult, LoopResultT> &a
+    static LoopResultT pull_one( interfaces::Arbiter<HandlerResult, LoopResultT> &a
                                , ChainT<AbstractHandlerRef, ChainTArgs...> & chain
-                               , SourceT && src);
+                               , SourceT && src
+                               , Message & targetMessage );
 };
 
 /**@brief Strightforward pipeline template primitive.
@@ -236,7 +266,7 @@ struct HandlerTraits< MessageT
  *
  * This is the basic implementation of pipeline that performs sequential
  * invocation of processing atoms stored at ordered container, guided by
- * arbitering class.
+ * assessment class (arbiter).
  * */
 template< template< typename
                   , typename > class AbstractHandlerT
@@ -290,14 +320,15 @@ template< template <typename...> class ChainT
         , typename LoopResultT
         , typename SourceT
         , typename ... ChainTArgs
-        >
-LoopResultT HandlerTraits< MessageT
-        , HandlerResultT
-        , iBasicHandler>::process( interfaces::Arbiter< HandlerResultT
-                                                      , LoopResultT> & a
-                                 , ChainT<AbstractHandlerRef, ChainTArgs...> & chain
-                                 , SourceT && src) {
-    typedef aux::SourceTraits<SourceT, MessageT> SrcTraits;
+        > LoopResultT
+HandlerTraits< MessageT
+             , HandlerResultT
+             , iBasicHandler>::process( interfaces::Arbiter< HandlerResultT
+                                                           , LoopResultT> & a
+                                      , ChainT<AbstractHandlerRef, ChainTArgs...> & chain
+                                      , SourceT && src) {
+    typedef aux::SourceTraits< typename std::remove_reference<SourceT>::type
+                             , MessageT > SrcTraits;
     typename SrcTraits::Iterator it(src);
     Message * msg;
     while( !! (msg = it.get()) ) {
@@ -309,6 +340,36 @@ LoopResultT HandlerTraits< MessageT
         if( ! a.next_message() ) {
             break;
         }
+    }
+    return a.pop_result();
+}
+
+
+template< typename MessageT
+        , typename HandlerResultT>
+template< template <typename...> class ChainT
+        , typename LoopResultT
+        , typename SourceT
+        , typename ... ChainTArgs
+        > LoopResultT
+HandlerTraits< MessageT
+             , HandlerResultT
+             , iBasicHandler>::pull_one( interfaces::Arbiter< HandlerResultT
+                                                           , LoopResultT> & a
+                                       , ChainT<AbstractHandlerRef, ChainTArgs...> & chain
+                                       , SourceT && src
+                                       , MessageT & targetMessage ) {
+    typedef aux::SourceTraits< typename std::remove_reference<SourceT>::type
+                             , MessageT > SrcTraits;
+    typename SrcTraits::Iterator it(src);
+    Message * msg;
+    if( !! (msg = it.get()) ) {
+        for( AbstractHandler * h : chain ) {
+            if( ! a.consider_handler_result( h->process(*msg) ) ) {
+                break;
+            }
+        }
+        targetMessage = *msg;  // output assignment
     }
     return a.pop_result();
 }

@@ -20,14 +20,9 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-# if 0
-# include "manifold.tcc"
+# include "tstStubs.hpp"
 
-# define BOOST_TEST_NO_MAIN
-//# define BOOST_TEST_MODULE Data source with metadata
-# include <boost/test/unit_test.hpp>
-
-/**This unit test checks the basic manifold event iteration capabilites. The
+/**This unit test checks the pipeline message iteration capabilites. The
  * purpose is to check whether the abort/fork-filling logic works as expected.
  *
  * In order to mimic the fork-filling, we use a fake processor, that
@@ -51,112 +46,20 @@
 namespace pipet {
 namespace test {
 
-struct Message {
-    int id;
-};
-
-typedef pipet::Manifold<Message, int> TestingManifold;
-
-// Simple processor to check that all events appears in order and remember the
-// latest one's id.
-class OrderCheck {
-private:
-    int _prevNum;
-public:
-    OrderCheck() : _prevNum(0) {}
-    OrderCheck( const OrderCheck & ) = delete;
-    bool operator()(Message & msg) {  // TODO: bool -> void
-        BOOST_CHECK_EQUAL( msg.id - 1, _prevNum );
-        _prevNum = msg.id;
-        return true;  // XXX
-    }
-    int latest_id() const { return _prevNum; }
-    void reset() { _prevNum = 0; }
-};
-
-// Processor mimicking the fork/junction manifold.
-class ForkMimic : public TestingManifold::ISource {
-private:
-    int _nAcc;
-    std::vector<Message> _acc;
-    Message _cMsg;
-    bool _wasFull;
-public:
-    ForkMimic( int nAcc ) : _nAcc(nAcc), _wasFull(false)
-        { _acc.reserve(_nAcc); }
-
-    pipet::aux::ManifoldRC operator()(Message & msg) {
-        // We aborting propagation here until the fork is filled. Upon
-        // latest event comes, we return 'fork filled' flag, causing iterating
-        // loop to continue propagation from this fork as the messages source.
-        BOOST_CHECK_LT( _acc.size(), _nAcc );
-        _acc.push_back( msg );
-        if( _acc.size() == _nAcc ) {
-            _wasFull = true;
-            return pipet::aux::RC_ForkFilled;
-        }
-        return pipet::aux::RC_ForkFilling;
-    }
-
-    virtual Message * next() override {
-        if( !_acc.empty() ) {
-            _cMsg = *_acc.begin();
-            _acc.erase(_acc.begin());
-            return &_cMsg;
-        }
-        return nullptr;
-    }
-
-    void reset() {
-        _acc.clear();
-        _wasFull = false;
-    }
-
-    bool was_full() const { return _wasFull; }
-};
-
-class ManifoldArbiter : public TestingManifold::IArbiter {
+class PipelineTestingFixture {
 protected:
-    virtual int pop_result() override {
-        Parent::_reset_flags();
-        // ?
-        return 0;
-    }
-public:
-    typedef TestingManifold::IArbiter Parent;
-};
-
-// Testing source, emitting messages with id set to the simple increasing
-// natural series.
-class TestingSource2 : public TestingManifold::ISource {
-private:
-    size_t _nMsgsMax;
-    Message _reentrantMessage;
-public:
-    TestingSource2(size_t nMsgsMax) : _nMsgsMax( nMsgsMax )
-                                   , _reentrantMessage {0} {}
-    virtual Message * next() override {
-        if( ++ _reentrantMessage.id > _nMsgsMax ) {
-            return nullptr;
-        }
-        return &_reentrantMessage;
-    }
-};
-
-class ManifoldTestingFixture {
-protected:
-    ManifoldArbiter _a;
+    pipet::GenericArbiter<int> _a;
     OrderCheck _oc[4];
     ForkMimic _fork2
             , _fork3
             , _fork4
             ;
 public:
-    ManifoldTestingFixture() : _fork2(2)
+    PipelineTestingFixture() : _fork2(2)
                              , _fork3(3)
                              , _fork4(4)
                              {}
-    ~ManifoldTestingFixture() {}
+    ~PipelineTestingFixture() {}
 };
 
 }  // namespace test
@@ -165,20 +68,49 @@ public:
 //
 // Test suite
 
-BOOST_FIXTURE_TEST_SUITE( manifoldSuite, pipet::test::ManifoldTestingFixture )
+BOOST_FIXTURE_TEST_SUITE( forkJunctionLogicSuite, pipet::test::PipelineTestingFixture )
 
-// Simplest test case. Just composes manifold of 3 trivial always-forwarding
-// processors to check that main Manifold processing loop actually able to
+// Border case --- an empty pipeline. Shall do nothing except of iterating the
+// source sepleting it.
+BOOST_AUTO_TEST_CASE( emptyPipeline ) {
+    pipet::Pipe<pipet::test::Message> mf;
+
+    pipet::test::TestingSource2 src(10);
+    pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+        _a, mf.upcast(), src );
+
+    // Check that source is empty.
+    BOOST_CHECK( ! src.get() );
+}
+
+// Border case --- a pipeline consisting of single handler.
+BOOST_AUTO_TEST_CASE( singularPropagation ) {
+    pipet::Pipe<pipet::test::Message> mf;
+    mf.push_back( _oc[0] );
+    for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
+        pipet::test::TestingSource2 src(nMsgsMax);
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
+        // Check that ALL the messages have passed throught the pipe.
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
+        _oc[0].reset();
+    }
+}
+
+// Simplest test case. Just composes pipeline of 3 trivial always-forwarding
+// processors to check that main pipe processing loop actually able to
 // propagate messages.
-BOOST_AUTO_TEST_CASE( simplePropagation ) {
-    pipet::test::TestingManifold mf(&_a);
+BOOST_AUTO_TEST_CASE( simplePropagation
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/singularPropagation") ) {
+    pipet::Pipe<pipet::test::Message> mf;
     mf.push_back( _oc[0] );
     mf.push_back( _oc[1] );
     mf.push_back( _oc[2] );
     for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
         pipet::test::TestingSource2 src(nMsgsMax);
-        mf.process( src );
-        // Check that ALL the messages have passed throught the manifold.
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
+        // Check that ALL the messages have passed throught the pipe.
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[2].latest_id() );
@@ -192,15 +124,16 @@ BOOST_AUTO_TEST_CASE( simplePropagation ) {
 // fork/junction handler of capacity 2 between two message counters to check
 // that f/j handler is able to do its job.
 BOOST_AUTO_TEST_CASE( simpleFork2
-                    , *boost::unit_test::depends_on("manifoldSuite/simplePropagation") ) {
-    pipet::test::TestingManifold mf(&_a);
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/simplePropagation") ) {
+    pipet::Pipe<pipet::test::Message> mf;
     mf.push_back( _oc[0] );
     mf.push_back( _fork2 );
     mf.push_back( _oc[1] );
     for( size_t nMsgsMax = 2; nMsgsMax < 10; nMsgsMax += 2 ) {
         pipet::test::TestingSource2 src(nMsgsMax);
-        mf.process( src );
-        // Check that ALL the messages have passed through the manifold.
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
+        // Check that ALL the messages have passed through the pipe.
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         BOOST_CHECK( _fork2.was_full() );
@@ -210,16 +143,18 @@ BOOST_AUTO_TEST_CASE( simpleFork2
     }
 }
 
+// Same as simpleFork2, but for triple fork.
 BOOST_AUTO_TEST_CASE( simpleFork3
-                    , *boost::unit_test::depends_on("manifoldSuite/simplePropagation") ) {
-    pipet::test::TestingManifold mf(&_a);
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/simplePropagation") ) {
+    pipet::Pipe<pipet::test::Message> mf;
     mf.push_back( _oc[0] );
     mf.push_back( _fork3 );
     mf.push_back( _oc[1] );
     for( size_t nMsgsMax = 3; nMsgsMax < 15; nMsgsMax += 3 ) {
         pipet::test::TestingSource2 src(nMsgsMax);
-        mf.process( src );
-        // Check that ALL the messages have passed through the manifold.
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
+        // Check that ALL the messages have passed through the pipe.
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         BOOST_CHECK( _fork3.was_full() );
@@ -229,16 +164,17 @@ BOOST_AUTO_TEST_CASE( simpleFork3
     }
 }
 
+// Same as simpleFork2, but for four-fork.
 BOOST_AUTO_TEST_CASE( simpleFork4
-                    , *boost::unit_test::depends_on("manifoldSuite/simplePropagation") ) {
-    pipet::test::TestingManifold mf(&_a);
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/simplePropagation") ) {
+    pipet::Pipe<pipet::test::Message> mf;
     mf.push_back( _oc[0] );
     mf.push_back( _fork4 );
     mf.push_back( _oc[1] );
     for( size_t nMsgsMax = 4; nMsgsMax < 20; nMsgsMax += 4 ) {
         pipet::test::TestingSource2 src(nMsgsMax);
-        mf.process( src );
-        // Check that ALL the messages have passed through the manifold.
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         BOOST_CHECK( _fork4.was_full() );
@@ -248,16 +184,18 @@ BOOST_AUTO_TEST_CASE( simpleFork4
     }
 }
 
+// This test case checks that fork processing algorithm is able to handle
+// source with number of messages that is aliquant to the fork's number.
 BOOST_AUTO_TEST_CASE( singleFork
-                    /*, *boost::unit_test::depends_on("manifoldSuite/simpleFork4")*/ ) {
-    pipet::test::TestingManifold mf(&_a);
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/simpleFork4") ) {
+    pipet::Pipe<pipet::test::Message> mf;
     mf.push_back( _oc[0] );
     mf.push_back( _fork4 );
     mf.push_back( _oc[1] );
-    for( size_t nMsgsMax = 1; nMsgsMax < 2; ++nMsgsMax ) {  // todo: < 12
+    for( size_t nMsgsMax = 1; nMsgsMax < 12; ++nMsgsMax ) {
         pipet::test::TestingSource2 src(nMsgsMax);
-        mf.process( src );
-        // Check that ALL the messages have passed through the manifold.
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         if( nMsgsMax >= 4 ) {
@@ -271,9 +209,29 @@ BOOST_AUTO_TEST_CASE( singleFork
     }
 }
 
+// Like singularPropagation TC but with fork. Checks that single f/j node can
+// be adequately processed.
+BOOST_AUTO_TEST_CASE( standaloneFork
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/simpleFork4") ) {
+    pipet::Pipe<pipet::test::Message> mf;
+    mf.push_back( _fork4 );
+    for( size_t nMsgsMax = 1; nMsgsMax < 11; ++nMsgsMax ) {  // todo: < 12
+        pipet::test::TestingSource2 src(nMsgsMax);
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
+        if( nMsgsMax >= 4 ) {
+            BOOST_CHECK( _fork4.was_full() );
+        } else {
+            BOOST_CHECK( !_fork4.was_full() );
+        }
+        _fork4.reset();
+    }
+}
+
+// Checks pipeline with 3-forking and then 2-forking handle (tapering pipe).
 BOOST_AUTO_TEST_CASE( forks3to2
-                    , *boost::unit_test::depends_on("manifoldSuite/singleFork") ) {
-    pipet::test::TestingManifold mf(&_a);
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/singleFork") ) {
+    pipet::Pipe<pipet::test::Message> mf;
     mf.push_back( _oc[0] );
     mf.push_back( _fork3 );
     mf.push_back( _fork2 );
@@ -281,8 +239,8 @@ BOOST_AUTO_TEST_CASE( forks3to2
 
     for( size_t nMsgsMax = 1; nMsgsMax < 4; ++nMsgsMax ) {
         pipet::test::TestingSource2 src(nMsgsMax);
-        mf.process( src );
-        // Check that ALL the messages have passed throught the manifold.
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         if( nMsgsMax >= 2 ) {
@@ -293,7 +251,7 @@ BOOST_AUTO_TEST_CASE( forks3to2
         if( nMsgsMax >= 3 ) {
             BOOST_CHECK( _fork3.was_full() );
         } else {
-            BOOST_CHECK( !_fork2.was_full() );
+            BOOST_CHECK( !_fork3.was_full() );
         }
         _oc[0].reset();
         _oc[1].reset();
@@ -302,9 +260,10 @@ BOOST_AUTO_TEST_CASE( forks3to2
     }
 }
 
+// Checks pipeline with 2-forking and then 3-forking handle (expanding pipe).
 BOOST_AUTO_TEST_CASE( forks2to3
-                    , *boost::unit_test::depends_on("manifoldSuite/singleFork") ) {
-    pipet::test::TestingManifold mf(&_a);
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/singleFork") ) {
+    pipet::Pipe<pipet::test::Message> mf;
     mf.push_back( _oc[0] );
     mf.push_back( _fork2 );
     mf.push_back( _fork3 );
@@ -312,8 +271,9 @@ BOOST_AUTO_TEST_CASE( forks2to3
 
     for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
         pipet::test::TestingSource2 src(nMsgsMax);
-        mf.process( src );
-        // Check that ALL the messages have passed throught the manifold.
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
+        // Check that ALL the messages have passed throught the pipe.
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         _oc[0].reset();
@@ -323,9 +283,11 @@ BOOST_AUTO_TEST_CASE( forks2to3
     }
 }
 
+// Test for mixed topology (tapering and then expanding) to check that there is
+// no obvious multiplicity effects causing messages reordering or loss.
 BOOST_AUTO_TEST_CASE( combinedForks
-                    , *boost::unit_test::depends_on("manifoldSuite/singleFork") ) {
-    pipet::test::TestingManifold mf(&_a);
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/singleFork") ) {
+    pipet::Pipe<pipet::test::Message> mf;
     mf.push_back( _oc[0] );
     mf.push_back( _fork4 );
     mf.push_back( _oc[1] );
@@ -336,12 +298,28 @@ BOOST_AUTO_TEST_CASE( combinedForks
 
     for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
         pipet::test::TestingSource2 src(nMsgsMax);
-        mf.process( src );
-        // Check that ALL the messages have passed throught the manifold.
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
+        // Check that ALL the messages have passed throught the pipe.
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[2].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[3].latest_id() );
+        if( nMsgsMax >= 2 ) {
+            BOOST_CHECK( _fork2.was_full() );
+        } else {
+            BOOST_CHECK( !_fork2.was_full() );
+        }
+        if( nMsgsMax >= 3 ) {
+            BOOST_CHECK( _fork3.was_full() );
+        } else {
+            BOOST_CHECK( !_fork3.was_full() );
+        }
+        if( nMsgsMax >= 4 ) {
+            BOOST_CHECK( _fork4.was_full() );
+        } else {
+            BOOST_CHECK( !_fork4.was_full() );
+        }
         _oc[0].reset();
         _oc[1].reset();
         _oc[2].reset();
@@ -353,4 +331,3 @@ BOOST_AUTO_TEST_CASE( combinedForks
 }
 
 BOOST_AUTO_TEST_SUITE_END()
-# endif
