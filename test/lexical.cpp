@@ -22,6 +22,26 @@
 
 # include "tstStubs.hpp"
 # include "pipet.tcc"
+# include <set>
+
+# include <iostream>  // XXX
+
+namespace pipet {
+namespace test {
+
+class FilteringProcessor : public std::set<int> {
+public:
+    FilteringProcessor( const std::set<int> & s ) : std::set<int>(s) {}
+    bool operator()( Message & msg ) {
+        if( std::set<int>::find(msg.id) != this->end() ) {
+            return false;
+        }
+        return true;
+    }
+};
+
+}
+} // namespace pipet
 
 BOOST_AUTO_TEST_SUITE( Lexical_suite )
 
@@ -41,36 +61,29 @@ BOOST_AUTO_TEST_CASE( ProcessingSyntax ) {
     pipet::test::TestingSource2 src(3);
     pipet::Pipe<pipet::test::Message> p;
 
-    // TODO: put handlers
-
+    pipet::test::OrderCheck o;
+    p.push_back( o );
     int rc = p << src;
 }
 
 // Processes few messages using the pipeline until two successfully
 // processed messages 
 BOOST_AUTO_TEST_CASE( ProxyEventExtraction ) {
-    pipet::test::TestingSource2 src(3);
+    pipet::test::TestingSource2 src(4);
     pipet::Pipe<pipet::test::Message> p;
 
     pipet::test::Message msg1, msg2;
 
-    // TODO: put handlers
+    pipet::test::OrderCheck o;
+    pipet::test::FilteringProcessor fp( {2} );
+
+    //p.push_back(o);
+    p.push_back(fp);
 
     (src | p) >> msg1 >> msg2;
 
-    # if 0
-    std::cout << "For msg1" << std::endl;
-    for( auto pName : msg1.procPassed ) {
-        std::cout << "    - " << pName  << std::endl;
-    }
-
-    std::cout << "For msg2" << std::endl;
-    for( auto pName : msg1.procPassed ) {
-        std::cout << "    - " << pName  << std::endl;
-    }
-    # endif
-
-    // ...
+    BOOST_CHECK_EQUAL( 1, msg1.id );
+    BOOST_CHECK_EQUAL( 3, msg2.id );
 }
 
 # if 0

@@ -315,7 +315,7 @@ HandlerTraits< MessageT
     // Deduced chain (pipeline's iterable container) type
     typedef ChainT< AbstractHandlerRef, ChainTArgs... > Chain;
     do {
-        std::vector<typename Chain::reverse_iterator> tStack;
+        std::stack<typename Chain::reverse_iterator> tStack;
         Message * msg = nullptr;
         // Iterate back from chain end
         for( auto it = chain.rbegin(); it != chain.rend(); ++it ) {
@@ -328,7 +328,7 @@ HandlerTraits< MessageT
                     break;
                 }
             }
-            tStack.push_back( it );
+            tStack.push( it );
         }
         if( !msg ) {
             if( ! (msg = src.get()) ) {
@@ -336,8 +336,9 @@ HandlerTraits< MessageT
                 return a.pop_result();
             }
         }
-        for( auto it = tStack.rbegin(); tStack.rend() != it; ++it ) {
-            if( a.consider_handler_result( (**it)->process( *msg ) ) ) {
+        while( !tStack.empty() ) {
+            if( a.consider_handler_result( (*tStack.top())->process( *msg ) ) ) {
+                tStack.pop();
                 // ok, invoke next handler
                 continue;
             }

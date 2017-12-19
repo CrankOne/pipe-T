@@ -34,6 +34,9 @@ namespace test {
 struct Message {
     int id;
     std::vector<std::string> procPassed;
+
+    Message() : id(-1) {}
+    Message(int vid) : id(vid) {}
 };
 
 // Simple processor to check that all events appears in order and remember the
@@ -102,7 +105,7 @@ private:
     Message _reentrantMessage;
 public:
     TestingSource2(size_t nMsgsMax) : _nMsgsMax( nMsgsMax )
-                                   , _reentrantMessage {0} {}
+                                   , _reentrantMessage(0) {}
     virtual Message * get() {
         if( ++ _reentrantMessage.id > _nMsgsMax ) {
             return nullptr;
