@@ -44,12 +44,12 @@ namespace pipet {
 /// Note: all modification will be refused upon abort/discrimination.
 enum struct PipeRC : int8_t {
     AbortAll  = 0x0,
-    NextMessage = 0x1,
-    NextHandler = 0x2,
-    ForkFill    = 0x4,
-    Continue    = NextMessage | NextHandler,
-    ForkFilling = NextMessage | ForkFill,
-    ForkFilled  = NextHandler | ForkFill
+    f_NextMessage = 0x1,
+    f_NextHandler = 0x2,
+    f_MessageHold = 0x4,
+    Continue    = f_NextMessage | f_NextHandler,
+    MessageKept = f_NextMessage | f_MessageHold,
+    Complete    = f_NextHandler | f_MessageHold
 };
 
 inline bool operator & (PipeRC lhs, PipeRC rhs) {
@@ -103,17 +103,20 @@ protected:
         _doAbort = _doSkip = _forkFilled = false;
     }
 public:
+    GenericArbiter() {
+        _reset_flags();
+    }
     /// Causes transitions
     virtual bool consider_handler_result( PipeRC fs ) override {
-        _doAbort = !((PipeRC::NextMessage & fs) | (PipeRC::NextHandler & fs));
-        _doSkip = !(PipeRC::NextMessage & fs);
-        _forkFilled = (PipeRC::ForkFill & fs) && (PipeRC::NextHandler & fs);
-        return PipeRC::NextHandler & fs;
+        _doAbort = !((PipeRC::f_NextMessage & fs) | (PipeRC::f_NextHandler & fs));
+        _doSkip = !(PipeRC::f_NextMessage & fs);
+        _forkFilled = (PipeRC::f_MessageHold & fs) && (PipeRC::f_NextHandler & fs);
+        return PipeRC::f_NextHandler & fs;
     }
     virtual bool next_message() override {
         return !_doSkip;
     }
-    virtual bool is_fork_filled() const {  // TODO: rename to "can_produce()" or smth
+    virtual bool previous_is_full() const {
         return _forkFilled;
     }
     /// This is the single method that has to be overriden by particular
@@ -125,7 +128,7 @@ public:
             return ResT( -1 );
         }
     }
-public:
+
     bool do_skip() const { return _doSkip; }
     bool do_abort() const { return _doAbort; }
 };
@@ -136,7 +139,7 @@ struct HandlerTraits< MessageT
                     , iPipeHandler > {
     typedef MessageT                                    Message;
     typedef PipeRC                                      HandlerResult;
-    typedef iPipeHandler<Message, HandlerResult>    AbstractHandler;
+    typedef iPipeHandler<Message, HandlerResult>        AbstractHandler;
     typedef AbstractHandler *                           AbstractHandlerRef;
 
     template<typename CallableT>
@@ -185,7 +188,7 @@ struct HandlerResultConverter<PipeRC, void> {
 template<>
 struct HandlerResultConverter<PipeRC, bool> {
     virtual PipeRC convert( bool v ) {
-        return v ? PipeRC::Continue : PipeRC::NextMessage;
+        return v ? PipeRC::Continue : PipeRC::f_NextMessage;
     }
 };
 
@@ -243,7 +246,7 @@ HandlerTraits< MessageT
                 if( a.consider_handler_result( h.process( *msg ) ) ) {
                     // consider_handler_result() returned true, what means we
                     // can propagate further along the handlers chain.
-                    if( a.is_fork_filled() ){
+                    if( a.previous_is_full() ){
                         // Fork was filled and junction has merged events. It
                         // means that we have to proceed with events that were put
                         // in "junction" queue as if it is an event source.
@@ -311,11 +314,8 @@ HandlerTraits< MessageT
                                       , MessageT & targetMessage ) {
     // Deduced chain (pipeline's iterable container) type
     typedef ChainT< AbstractHandlerRef, ChainTArgs... > Chain;
-    // Messages source traits
-    //typedef aux::SourceTraits< typename std::remove_reference<SourceT>::type
-    //                         , MessageT> SrcTraits;
     do {
-        std::stack<typename Chain::reverse_iterator> tStack;
+        std::vector<typename Chain::reverse_iterator> tStack;
         Message * msg = nullptr;
         // Iterate back from chain end
         for( auto it = chain.rbegin(); it != chain.rend(); ++it ) {
@@ -328,7 +328,7 @@ HandlerTraits< MessageT
                     break;
                 }
             }
-            tStack.push( it );
+            tStack.push_back( it );
         }
         if( !msg ) {
             if( ! (msg = src.get()) ) {
@@ -336,14 +336,22 @@ HandlerTraits< MessageT
                 return a.pop_result();
             }
         }
-        while( ! tStack.empty() ) {
-            if( a.consider_handler_result( (*tStack.top())->process( *msg ) ) ) {
-                tStack.pop();
+        for( auto it = tStack.rbegin(); tStack.rend() != it; ++it ) {
+            if( a.consider_handler_result( (**it)->process( *msg ) ) ) {
+                // ok, invoke next handler
                 continue;
             }
-            // TODO: This break may appear due to the fact that fork is not yet filled.
-            // Current message propagation aborted.
-            break;  // restart all the stuff.
+            // (Dev note) this commented code block should give a gist of
+            // "greed" strategy aspect for future development.
+            //if( a.fork_filling() && a.is_greedy() ) {
+            //    // Abort caused by accumulating handler and greedy strategy
+            //    // is chosen. Current loop shall request next message.
+            //    it = tStack.rbegin();
+            //} else {
+            //    break;  // restart chain iteration
+            //}
+            // Current message propagation has to be aborted
+            break;
         }
         if( tStack.empty() ) {
             // Means, the message has passed all the chain and may be

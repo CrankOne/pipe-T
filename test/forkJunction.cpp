@@ -261,15 +261,7 @@ BOOST_AUTO_TEST_CASE( singleForkPull
         }
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
-        // TODO: depends on wether the f/j can emit messages before it becomes
-        // full. SEARCH_PATTERN: NOTE-I-1
-        # if 0
-        if( nMsgsMax >= 4 ) {
-            BOOST_CHECK( _fork4.was_full() );
-        } else {
-            BOOST_CHECK( !_fork4.was_full() );
-        }
-        # endif
+        BOOST_CHECK( !_fork4.was_full() );
         _oc[0].reset();
         _oc[1].reset();
         _fork4.reset();
@@ -412,10 +404,6 @@ BOOST_AUTO_TEST_CASE( combinedForksPull
 
     for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
         pipet::test::TestingSource2 src(nMsgsMax);
-        # if 0
-        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
-            _a, mf.upcast(), src );
-        # endif
         for( size_t n = 0; n < nMsgsMax; ++n ) {
             pipet::test::Message msg;
             pipet::Pipe<pipet::test::Message>::TheHandlerTraits::pull_one(
@@ -427,25 +415,9 @@ BOOST_AUTO_TEST_CASE( combinedForksPull
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[2].latest_id() );
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[3].latest_id() );
-        // TODO: depends on wether the f/j can emit messages before it becomes
-        // full. SEARCH_PATTERN: NOTE-I-1
-        # if 0
-        if( nMsgsMax >= 2 ) {
-            BOOST_CHECK( _fork2.was_full() );
-        } else {
-            BOOST_CHECK( !_fork2.was_full() );
-        }
-        if( nMsgsMax >= 3 ) {
-            BOOST_CHECK( _fork3.was_full() );
-        } else {
-            BOOST_CHECK( !_fork3.was_full() );
-        }
-        if( nMsgsMax >= 4 ) {
-            BOOST_CHECK( _fork4.was_full() );
-        } else {
-            BOOST_CHECK( !_fork4.was_full() );
-        }
-        # endif
+        BOOST_CHECK( !_fork2.was_full() );
+        BOOST_CHECK( !_fork3.was_full() );
+        BOOST_CHECK( !_fork4.was_full() );
         _oc[0].reset();
         _oc[1].reset();
         _oc[2].reset();

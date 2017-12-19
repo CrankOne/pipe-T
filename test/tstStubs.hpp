@@ -70,11 +70,11 @@ public:
         // loop to continue propagation from this fork as the messages source.
         BOOST_CHECK_LT( _acc.size(), _nAcc );
         _acc.push_back( msg );
-        if( _acc.size() == _nAcc ) {
+        if( _acc.size() >= _nAcc ) {
             _wasFull = true;
-            return PipeRC::ForkFilled;
+            return PipeRC::Complete;
         }
-        return PipeRC::ForkFilling;
+        return PipeRC::MessageKept;
     }
 
     virtual Message * get() override {
