@@ -33,7 +33,7 @@ namespace pipet {
 /// proxying object in complex expressions.
 template< typename PipelineT
         , typename SourceT
-        , typename ArbiterT=interfaces::GenericArbiter<int>
+        , typename ArbiterT=GenericArbiter<int>
         >
 class EvaluationProxy {
 public:
@@ -50,7 +50,7 @@ public:
     EvaluationProxy(Pipeline & p, Source & src) : _p(p), _sPtr(&src) {}
     
     Pipeline & pipeline() { return _p; }
-    Source & source() { return _sPtr; }
+    Source & source() { return *_sPtr; }
     Arbiter & arbiter() { return _arbiter; }
 };  // class EvaluationProxy
 
@@ -63,7 +63,7 @@ template< typename PipelineT
 EvaluationProxy< PipelineT
                , SourceT >
 operator|( SourceT & src, PipelineT & ppl ) {
-    return EvaluationProxy( ppl, src );
+    return EvaluationProxy<PipelineT, SourceT>( ppl, src );
 }
 
 template< typename PipelineT
@@ -71,14 +71,15 @@ template< typename PipelineT
 EvaluationProxy< PipelineT
                , SourceT >
 operator>>( EvaluationProxy< PipelineT
-                           , SourceT > ep
-          , MessageT & msgRef) {
+                           , SourceT > && ep
+          , typename PipelineT::Message & msgRef) {
     typedef EvaluationProxy<PipelineT, SourceT> TheEvaluationProxy;
-    TheEvaluationProxy::Arbiter::LoopResult rc =
+    typename TheEvaluationProxy::Arbiter::LoopResult rc =
         PipelineT::TheHandlerTraits::pull_one( ep.arbiter()
-                                             , ep.pipeline()
+                                             , ep.pipeline().upcast()
                                              , ep.source()
                                              , msgRef );
+    return ep;
 }
 
 }  // namespace pipet

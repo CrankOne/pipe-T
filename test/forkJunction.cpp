@@ -83,14 +83,48 @@ BOOST_AUTO_TEST_CASE( emptyPipeline ) {
     BOOST_CHECK( ! src.get() );
 }
 
+// Border case --- an empty pipeline. Shall do nothing except of pulling one
+// message from source.
+BOOST_AUTO_TEST_CASE( emptyPipelinePull ) {
+    pipet::Pipe<pipet::test::Message> mf;
+
+    pipet::test::TestingSource2 src(10);
+    pipet::test::Message msg;
+    pipet::Pipe<pipet::test::Message>::TheHandlerTraits::pull_one(
+        _a, mf.upcast(), src, msg );
+
+    BOOST_CHECK_EQUAL( 1, msg.id );
+    BOOST_CHECK_EQUAL( 2, src.get()->id );
+}
+
 // Border case --- a pipeline consisting of single handler.
-BOOST_AUTO_TEST_CASE( singularPropagation ) {
+BOOST_AUTO_TEST_CASE( singularPropagation
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/emptyPipeline") ) {
     pipet::Pipe<pipet::test::Message> mf;
     mf.push_back( _oc[0] );
     for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
         pipet::test::TestingSource2 src(nMsgsMax);
         pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
             _a, mf.upcast(), src );
+        // Check that ALL the messages have passed throught the pipe.
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
+        _oc[0].reset();
+    }
+}
+
+// Border case --- a pipeline consisting of single handler, pull_one() check.
+BOOST_AUTO_TEST_CASE( singularPropagationPull
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/emptyPipelinePull") ) {
+    pipet::Pipe<pipet::test::Message> mf;
+    mf.push_back( _oc[0] );
+    for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
+        pipet::test::TestingSource2 src(nMsgsMax);
+        for( size_t n = 0; n < nMsgsMax; ++n ) {
+            pipet::test::Message msg;
+            pipet::Pipe<pipet::test::Message>::TheHandlerTraits::pull_one(
+                _a, mf.upcast(), src, msg );
+            // ...
+        }
         // Check that ALL the messages have passed throught the pipe.
         BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
         _oc[0].reset();
@@ -209,6 +243,39 @@ BOOST_AUTO_TEST_CASE( singleFork
     }
 }
 
+// This test case checks that pull_one algorithm is able to handle
+// source with number of messages that is aliquant to the fork's number.
+BOOST_AUTO_TEST_CASE( singleForkPull
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/singularPropagationPull") ) {
+    pipet::Pipe<pipet::test::Message> mf;
+    mf.push_back( _oc[0] );
+    mf.push_back( _fork4 );
+    mf.push_back( _oc[1] );
+    for( size_t nMsgsMax = 1; nMsgsMax < 12; ++nMsgsMax ) {
+        pipet::test::TestingSource2 src(nMsgsMax);
+        for( size_t n = 0; n < nMsgsMax; ++n ) {
+            pipet::test::Message msg;
+            pipet::Pipe<pipet::test::Message>::TheHandlerTraits::pull_one(
+                _a, mf.upcast(), src, msg );
+            // ...
+        }
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
+        // TODO: depends on wether the f/j can emit messages before it becomes
+        // full. SEARCH_PATTERN: NOTE-I-1
+        # if 0
+        if( nMsgsMax >= 4 ) {
+            BOOST_CHECK( _fork4.was_full() );
+        } else {
+            BOOST_CHECK( !_fork4.was_full() );
+        }
+        # endif
+        _oc[0].reset();
+        _oc[1].reset();
+        _fork4.reset();
+    }
+}
+
 // Like singularPropagation TC but with fork. Checks that single f/j node can
 // be adequately processed.
 BOOST_AUTO_TEST_CASE( standaloneFork
@@ -320,6 +387,65 @@ BOOST_AUTO_TEST_CASE( combinedForks
         } else {
             BOOST_CHECK( !_fork4.was_full() );
         }
+        _oc[0].reset();
+        _oc[1].reset();
+        _oc[2].reset();
+        _oc[3].reset();
+        _fork2.reset();
+        _fork3.reset();
+        _fork4.reset();
+    }
+}
+
+// Test for mixed topology (tapering and then expanding) to check that there is
+// no obvious multiplicity effects causing messages reordering or loss.
+BOOST_AUTO_TEST_CASE( combinedForksPull
+                    , *boost::unit_test::depends_on("forkJunctionLogicSuite/singleFork") ) {
+    pipet::Pipe<pipet::test::Message> mf;
+    mf.push_back( _oc[0] );
+    mf.push_back( _fork4 );
+    mf.push_back( _oc[1] );
+    mf.push_back( _fork2 );
+    mf.push_back( _oc[2] );
+    mf.push_back( _fork3 );
+    mf.push_back( _oc[3] );
+
+    for( size_t nMsgsMax = 1; nMsgsMax < 30; ++nMsgsMax ) {
+        pipet::test::TestingSource2 src(nMsgsMax);
+        # if 0
+        pipet::Pipe<pipet::test::Message>::TheHandlerTraits::process(
+            _a, mf.upcast(), src );
+        # endif
+        for( size_t n = 0; n < nMsgsMax; ++n ) {
+            pipet::test::Message msg;
+            pipet::Pipe<pipet::test::Message>::TheHandlerTraits::pull_one(
+                _a, mf.upcast(), src, msg );
+            // ...
+        }
+        // Check that ALL the messages have passed throught the pipe.
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[0].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[1].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[2].latest_id() );
+        BOOST_CHECK_EQUAL( nMsgsMax, _oc[3].latest_id() );
+        // TODO: depends on wether the f/j can emit messages before it becomes
+        // full. SEARCH_PATTERN: NOTE-I-1
+        # if 0
+        if( nMsgsMax >= 2 ) {
+            BOOST_CHECK( _fork2.was_full() );
+        } else {
+            BOOST_CHECK( !_fork2.was_full() );
+        }
+        if( nMsgsMax >= 3 ) {
+            BOOST_CHECK( _fork3.was_full() );
+        } else {
+            BOOST_CHECK( !_fork3.was_full() );
+        }
+        if( nMsgsMax >= 4 ) {
+            BOOST_CHECK( _fork4.was_full() );
+        } else {
+            BOOST_CHECK( !_fork4.was_full() );
+        }
+        # endif
         _oc[0].reset();
         _oc[1].reset();
         _oc[2].reset();

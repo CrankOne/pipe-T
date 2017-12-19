@@ -26,7 +26,7 @@ find_package( Boost ${Boost_FORCE_VERSION}
               REQUIRED )
 
 add_executable( pipeT_ut
-                main.cpp handler.cpp basic.cpp forkJunction.cpp )
+                main.cpp handler.cpp basic.cpp forkJunction.cpp lexical.cpp )
 
 target_compile_features( pipeT_ut PUBLIC
             c_variadic_macros

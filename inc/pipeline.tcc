@@ -52,7 +52,7 @@ enum struct PipeRC : int8_t {
     ForkFilled  = NextHandler | ForkFill
 };
 
-bool operator & (PipeRC lhs, PipeRC rhs) {
+inline bool operator & (PipeRC lhs, PipeRC rhs) {
     return (static_cast<uint8_t>(lhs) & static_cast<uint8_t>(rhs));
 }
 
@@ -90,7 +90,7 @@ public:
 };  // class iPipeHandler
 
 template<typename ResT>
-struct GenericArbiter : public interfaces::Arbiter<PipeRC, ResT> {
+class GenericArbiter : public interfaces::Arbiter<PipeRC, ResT> {
 public:
     typedef ResT LoopResult;
 private:
@@ -113,7 +113,7 @@ public:
     virtual bool next_message() override {
         return !_doSkip;
     }
-    virtual bool is_fork_filled() const {
+    virtual bool is_fork_filled() const {  // TODO: rename to "can_produce()" or smth
         return _forkFilled;
     }
     /// This is the single method that has to be overriden by particular
@@ -172,6 +172,7 @@ struct HandlerTraits< MessageT
                                , ChainT<AbstractHandlerRef, ChainTArgs...> & chain
                                , SourceT && src
                                , MessageT & targetMessage );
+    template<typename LoopResultT> using IArbiter = GenericArbiter<LoopResultT>;
 };
 
 template<>
@@ -305,9 +306,9 @@ template< template <typename...> class ChainT
 HandlerTraits< MessageT
              , PipeRC
              , iPipeHandler>::pull_one( GenericArbiter< LoopResultT > & a
-                                          , ChainT< AbstractHandlerRef, ChainTArgs... > & chain
-                                          , SourceT && src
-                                          , MessageT & targetMessage ) {
+                                      , ChainT< AbstractHandlerRef, ChainTArgs... > & chain
+                                      , SourceT && src
+                                      , MessageT & targetMessage ) {
     // Deduced chain (pipeline's iterable container) type
     typedef ChainT< AbstractHandlerRef, ChainTArgs... > Chain;
     // Messages source traits
@@ -336,9 +337,11 @@ HandlerTraits< MessageT
             }
         }
         while( ! tStack.empty() ) {
-            if( !a.consider_handler_result( (*tStack.top())->process( *msg ) ) ) {
+            if( a.consider_handler_result( (*tStack.top())->process( *msg ) ) ) {
                 tStack.pop();
+                continue;
             }
+            // TODO: This break may appear due to the fact that fork is not yet filled.
             // Current message propagation aborted.
             break;  // restart all the stuff.
         }
@@ -360,6 +363,19 @@ template<typename MessageT> using Pipe = Pipeline< iPipeHandler
                                                  ;
 
 }  // namespace pipet
+
+# if 0
+template< typename PipelineT
+        , typename MessageT
+        , typename ArbiterT=pipet::GenericArbiter<int>
+        >
+typename ArbiterT::LoopResult
+operator<<( PipelineT & p,  & src ) {
+    ArbiterT a;
+    return PipelineT::TheHandlerTraits::process(
+            a, p.upcast(), src );
+}
+# endif
 
 # endif  // H_PIPE_T_PIPELINE_H
 

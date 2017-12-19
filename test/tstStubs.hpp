@@ -47,6 +47,7 @@ public:
     bool operator()(Message & msg) {
         BOOST_CHECK_EQUAL( msg.id - 1, _prevNum );
         _prevNum = msg.id;
+        return true;
     }
     int latest_id() const { return _prevNum; }
     void reset() { _prevNum = 0; }

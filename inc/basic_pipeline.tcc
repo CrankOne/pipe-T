@@ -55,6 +55,7 @@ struct Arbiter {
 }  // namespace interfaces
 
 template<typename PipelineTraitsT> class BasicPipeline;
+template<typename ResT> class GenericArbiter;
 
 namespace aux {
 
@@ -259,6 +260,8 @@ struct HandlerTraits< MessageT
                                , ChainT<AbstractHandlerRef, ChainTArgs...> & chain
                                , SourceT && src
                                , Message & targetMessage );
+
+    template<typename LoopResultT> using IArbiter = interfaces::Arbiter<HandlerResult, LoopResultT>;
 };
 
 /**@brief Strightforward pipeline template primitive.
@@ -285,6 +288,7 @@ public:
     typedef typename TheHandlerTraits::AbstractHandler  AbstractHandler;
     typedef typename TheHandlerTraits::AbstractHandlerRef AbstractHandlerRef;
     typedef TChainT<AbstractHandlerRef>                 Chain;
+    typedef Pipeline<AbstractHandlerT, MessageT, Result, TChainT> Self;
 
     template<typename LoopResultT> using IArbiter = interfaces::Arbiter<Result, LoopResultT>;
 public:
@@ -305,6 +309,14 @@ public:
     }
 
     TChainT<AbstractHandlerRef> & upcast() { return *this; }
+
+    template< typename SourceT
+            , typename LoopResultT=int
+            , typename Arbiter=typename TheHandlerTraits::template IArbiter<LoopResultT> >
+    friend LoopResultT operator<<( Self & p, SourceT & src) {
+        Arbiter a;
+        return TheHandlerTraits::process( a, static_cast<Chain &>(p), src );
+    }
 };  // class Pipeline
 
 ////////////////////////////////////////////////////////////////////////////////
