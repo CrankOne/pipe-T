@@ -333,7 +333,10 @@ HandlerTraits< MessageT
         if( !msg ) {
             if( ! (msg = src.get()) ) {
                 // Even given source is unable to return the event --- abort.
-                return a.pop_result();
+                // return a.pop_result();
+                // ^^^^^^ We may further use "noexcept" behaviour for
+                // applications. Should it be controlled by arbiter (todo)?
+                throw pipet::errors::UnableToPull( &src );
             }
         }
         while( !tStack.empty() ) {

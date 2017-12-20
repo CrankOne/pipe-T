@@ -73,6 +73,23 @@ public:
     NotImplemented( const std::string & s ) : std::runtime_error(s) {}
 };  // class NotImplemented
 
+/// Source is empty while message pull requested.
+class UnableToPull : public std::exception {
+private:
+    void * _sourcePtr;
+    mutable char _buffer[128];
+public:
+    UnableToPull( void * sourcePtr ) : _sourcePtr( sourcePtr ) {}
+    char const * what() const throw() {
+        snprintf( _buffer
+                , sizeof(_buffer)
+                , "Unable to pull message: source is %p empty."
+                , _sourcePtr );
+        return _buffer;
+    }
+    const void * source_pointer() const { return _sourcePtr; }
+};  // class UnableToPull
+
 }  // namespace errors
 }  // namespace pipet
 

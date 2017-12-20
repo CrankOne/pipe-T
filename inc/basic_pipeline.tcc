@@ -54,8 +54,11 @@ struct Arbiter {
 
 }  // namespace interfaces
 
-template<typename PipelineTraitsT> class BasicPipeline;
 template<typename ResT> class GenericArbiter;
+
+namespace helpers {
+template<typename PipelineT, typename ArbiterT > class ThinEvaluationProxy;
+}  // namespace helpers
 
 namespace aux {
 
@@ -130,6 +133,17 @@ struct SourceTraits<interfaces::Source<MessageT>, MessageT> {
             return _src->get();
         }
     };
+};
+
+template<typename MessageT>
+struct MessageTraits {
+    typedef MessageT Message;
+    static Message * copy( const Message & src ) {
+        return new Message(src);
+    }
+    static void delete_copy( const Message * target ) {
+        delete target;
+    }
 };
 
 }  // namespace aux
@@ -265,7 +279,7 @@ struct HandlerTraits< MessageT
 };
 
 /**@brief Strightforward pipeline template primitive.
- * @class BasicPipeline
+ * @class Pipeline
  *
  * This is the basic implementation of pipeline that performs sequential
  * invocation of processing atoms stored at ordered container, guided by
@@ -310,10 +324,29 @@ public:
 
     TChainT<AbstractHandlerRef> & upcast() { return *this; }
 
+
+    template<typename CallableArgT>
+    friend Self & operator|=( Self & s, CallableArgT && p ) {
+        s.push_back( p );
+        return s;
+    }
+
+    template< typename LoopResultT=int
+            , typename Arbiter=typename TheHandlerTraits::template IArbiter<LoopResultT> >
+    friend helpers::ThinEvaluationProxy<Self, Arbiter> operator<<( Self & p, const Message & src) {
+        helpers::ThinEvaluationProxy<Self, Arbiter> ep(p);
+        ep.push( &src );
+        return ep;
+    }
+
     template< typename SourceT
             , typename LoopResultT=int
-            , typename Arbiter=typename TheHandlerTraits::template IArbiter<LoopResultT> >
-    friend LoopResultT operator<<( Self & p, SourceT & src) {
+            , typename Arbiter=typename TheHandlerTraits::template IArbiter<LoopResultT>
+            , typename T=std::enable_if<!std::is_same< SourceT, Message>::value> >
+    friend LoopResultT operator<=( Self & p, SourceT & src) {
+        static_assert( !std::is_same< SourceT, Message>::value,
+                       "Wrong instantiation. Use <= operator to use single "
+                       "message as a source." );
         Arbiter a;
         return TheHandlerTraits::process( a, static_cast<Chain &>(p), src );
     }

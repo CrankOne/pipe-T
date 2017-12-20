@@ -55,10 +55,10 @@ protected:
             , _fork4
             ;
 public:
-    PipelineTestingFixture() : _fork2(2)
-                             , _fork3(3)
-                             , _fork4(4)
-                             {}
+    PipelineTestingFixture() : _fork2(2, 12)
+                             , _fork3(3, 13)
+                             , _fork4(4, 14)
+                             , _oc{ {1}, {2}, {3}, {4} } {}
     ~PipelineTestingFixture() {}
 };
 

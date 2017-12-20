@@ -25,6 +25,8 @@
 
 # include "pipeline.tcc"
 
+# include <set>
+
 # define BOOST_TEST_NO_MAIN
 # include <boost/test/unit_test.hpp>
 
@@ -33,7 +35,7 @@ namespace test {
 
 struct Message {
     int id;
-    std::vector<std::string> procPassed;
+    std::vector<int> procPassed;
 
     Message() : id(-1) {}
     Message(int vid) : id(vid) {}
@@ -44,12 +46,15 @@ struct Message {
 class OrderCheck {
 private:
     int _prevNum;
+    int _id;
 public:
-    OrderCheck() : _prevNum(0) {}
+    OrderCheck() : _prevNum(0), _id(-1) {}
+    OrderCheck( int id ) : _prevNum(0), _id(id) {}
     OrderCheck( const OrderCheck & ) = delete;
     bool operator()(Message & msg) {
         BOOST_CHECK_EQUAL( msg.id - 1, _prevNum );
         _prevNum = msg.id;
+        msg.procPassed.push_back( _id );
         return true;
     }
     int latest_id() const { return _prevNum; }
@@ -63,8 +68,12 @@ private:
     std::vector<Message> _acc;
     Message _cMsg;
     bool _wasFull;
+    int _id;
 public:
-    ForkMimic( int nAcc ) : _nAcc(nAcc), _wasFull(false)
+    ForkMimic( int nAcc ) : _nAcc(nAcc), _wasFull(false), _id(-1)
+        { _acc.reserve(_nAcc); }
+
+    ForkMimic( int nAcc, int id ) : _nAcc(nAcc), _wasFull(false), _id(id)
         { _acc.reserve(_nAcc); }
 
     pipet::PipeRC operator()(Message & msg) {
@@ -72,6 +81,7 @@ public:
         // latest event comes, we return 'fork filled' flag, causing iterating
         // loop to continue propagation from this fork as the messages source.
         BOOST_CHECK_LT( _acc.size(), _nAcc );
+        msg.procPassed.push_back( _id );
         _acc.push_back( msg );
         if( _acc.size() >= _nAcc ) {
             _wasFull = true;
@@ -95,6 +105,22 @@ public:
     }
 
     bool was_full() const { return _wasFull; }
+};
+
+// Discriminates messages with given id.
+class FilteringProcessor : public std::set<int> {
+private:
+    int _id;
+public:
+    FilteringProcessor( const std::set<int> & s, int id ) : std::set<int>(s), _id(id) {}
+    FilteringProcessor( const std::set<int> & s ) : std::set<int>(s), _id(-1) {}
+    bool operator()( Message & msg ) {
+        msg.procPassed.push_back( _id );
+        if( std::set<int>::find(msg.id) != this->end() ) {
+            return false;
+        }
+        return true;
+    }
 };
 
 // Testing source, emitting messages with id set to the simple increasing

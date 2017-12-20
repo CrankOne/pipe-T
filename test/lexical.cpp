@@ -24,24 +24,17 @@
 # include "pipet.tcc"
 # include <set>
 
-# include <iostream>  // XXX
-
 namespace pipet {
 namespace test {
 
-class FilteringProcessor : public std::set<int> {
-public:
-    FilteringProcessor( const std::set<int> & s ) : std::set<int>(s) {}
-    bool operator()( Message & msg ) {
-        if( std::set<int>::find(msg.id) != this->end() ) {
-            return false;
-        }
-        return true;
-    }
-};
+static void * gSourceExpectedToFailPtr = nullptr;
 
+bool check_source_addr( pipet::errors::UnableToPull const & ex ) {
+    return ex.source_pointer() == gSourceExpectedToFailPtr;
 }
-} // namespace pipet
+
+}  // namespace test
+}  // namespace pipet
 
 BOOST_AUTO_TEST_SUITE( Lexical_suite )
 
@@ -63,7 +56,7 @@ BOOST_AUTO_TEST_CASE( ProcessingSyntax ) {
 
     pipet::test::OrderCheck o;
     p.push_back( o );
-    int rc = p << src;
+    int rc = p <= src;
 }
 
 // Processes few messages using the pipeline until two successfully
@@ -77,7 +70,7 @@ BOOST_AUTO_TEST_CASE( ProxyEventExtraction ) {
     pipet::test::OrderCheck o;
     pipet::test::FilteringProcessor fp( {2} );
 
-    //p.push_back(o);
+    p.push_back(o);
     p.push_back(fp);
 
     (src | p) >> msg1 >> msg2;
@@ -86,28 +79,41 @@ BOOST_AUTO_TEST_CASE( ProxyEventExtraction ) {
     BOOST_CHECK_EQUAL( 3, msg2.id );
 }
 
-# if 0
-// Immediately process entire source using the given pipeline. Operator<<
-// modifies the source's internal state.
-BOOST_AUTO_TEST_CASE( EntireSourceProcessing ) {
-    pipet::Pipe<pipet::test::Message> p;
-    pipet::test::TestingSource2 src(3);
-
-    int result = (p << src);
-    // ...
-}
-
 // Processes msg1 and assignes processing result then to msg2. NOTE:
 // operator<< will construct copy of the message, instead of modifying it.
 BOOST_AUTO_TEST_CASE( TemporarySourceProcessing ) {
-    pipet::Pipe<pipet::test::Message> p;
-    pipet::test::TestingSource2 src(3);
-    pipet::test::Message msg1, msg2. msg3;
+    using namespace ::pipet;
+    using namespace ::pipet::test;
+    Pipe<Message> p;
+    Message msg1(1), msg2(2), msg3(-1), msg4(-1);
 
-    (p << msg1 << msg2) >> msg2;
-    // ...
+    OrderCheck o(1);
+    ForkMimic fm(2, 2);
+    FilteringProcessor fp( {2}, 3 );
+
+    (p |= o) |= fm;
+    p |= fp;
+
+    auto proxy = (p << msg1 << msg2 >> msg3);
+
+    gSourceExpectedToFailPtr = &proxy;
+
+    BOOST_CHECK_EXCEPTION( operator>>(std::move(proxy), msg4)
+                         , ::pipet::errors::UnableToPull
+                         , ::pipet::test::check_source_addr );
+
+    BOOST_CHECK_EQUAL( msg1.id,  1 );
+    BOOST_CHECK_EQUAL( msg1.procPassed.size(),  0 );
+    BOOST_CHECK_EQUAL( msg2.id,  2 );
+    BOOST_CHECK_EQUAL( msg3.id,  1 );
+    BOOST_CHECK_EQUAL( msg3.procPassed.size(),  3 );
+    BOOST_CHECK_EQUAL( msg4.id, -1 );  // this event was discriminated
+
+    std::vector<int> cv = { 1, 2, 3 };
+    BOOST_CHECK_EQUAL_COLLECTIONS( msg3.procPassed.begin(), msg3.procPassed.end()
+                                 , cv.begin(), cv.end()
+                                 );
 }
-# endif
 
 BOOST_AUTO_TEST_SUITE_END()
 
