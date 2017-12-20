@@ -24,7 +24,7 @@
 # ifndef H_PIPE_T_H
 # define H_PIPE_T_H
 
-# include "pipet.tcc"
+# include "pipeline.tcc"
 
 # include <queue>
 
