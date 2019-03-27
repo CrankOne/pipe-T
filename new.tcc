@@ -152,26 +152,35 @@ public:
     }
 };  // Pipe
 
+// Keeps track of processors lifetime
 template<typename T>
-class EvaluationProxy : public Pipe<T>
-                      , public std::set<iProcessor<T>*> {
-};
+class EvaluationProxy : public std::list<iProcessor<T>*> {
+protected:
+    Pipe<T> * _pipe;
+public:
+    // TODO: enable if downcast to iProcessor is possible:
+    template<typename PT> void emplace( const PT & p ) {
+        PT * copyPtr = new PT(p);
+        this->push_back(copyPtr);
+        _pipe->push_back(copyPtr);
+    }
+};  // EvaluationProxy
 
 // In-place ctr of pipeline for two processors
-template<typename T> Pipe<T>
+template<typename T> EvaluationProxy<T>
 operator|( iProcessor<T> & p1, iProcessor<T> & p2 ) {
     Pipe<T> p(&p1);
     p.push_back(&p2);
     return p;
 }
 
-template<typename T> Pipe<T> &
-operator|( Pipe<T> & p, iProcessor<T> && proc ) {
+template<typename T> EvaluationProxy<T> &
+operator|( EvaluationProxy<T> & p, iProcessor<T> && proc ) {
     p.push_back( &proc );
     return p;
 }
 
-template<typename T, typename RCT> Pipe<T> &
+template<typename T, typename RCT> EvaluationProxy<T> &
 operator|( Pipe<T> & p, RCT(*f)(T &) ) {
     return p | StatelessMutator<T, RCT>(f);
 }
