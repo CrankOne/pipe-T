@@ -1,4 +1,5 @@
 # include <vector>
+# include <list>
 
 namespace ppt {
 
@@ -7,11 +8,20 @@ struct Traits {
     struct Routing {
         typedef int ResultCode;
         static constexpr ResultCode noPropFlag = 0x1
-                                  , intactFlag = 0x2
+                                  , noNextFlag = 0x2
+                                  , intactFlag = 0x4
                                   ;
-        static bool do_interrupt( ResultCode rc ) { return rc & noPropFlag; }
+        static bool do_stop_propagation( ResultCode rc ) { return rc & noPropFlag; }
+        static bool do_stop_iteration( ResultCode rc ) { return rc & noNextFlag; }
     };
 };
+
+template<typename T, typename SourceT>
+struct SourceTraits {
+    static bool has_message( const SourceT & src ) { return src.has_message(); }
+    static T & get_message_ref( SourceT & src ) { return src.next_message(); }
+};
+
 
 //
 // Processors
@@ -28,9 +38,8 @@ template<typename T>
 class iProcessor {
 public:
     virtual ~iProcessor(){}
-
     virtual typename Traits<T>::Routing::ResultCode eval( T & ) = 0;
-
+    typename Traits<T>::Routing::ResultCode operator()( T & m ) { return eval(m); }
     template<typename PT> PT as() { return dynamic_cast<PT&>(*this); }
 };  // iProcessor
 
@@ -79,7 +88,6 @@ private:
     typename Traits<T>::Routing::ResultCode (* _f)(const T &);
 public:
     StatelessObserver( typename Traits<T>::Routing::ResultCode (*f)(const T &) ) : _f(f) {}
-
     virtual typename Traits<T>::Routing::ResultCode observe( const T & m ) override {
         return _f( m );
     }
@@ -99,7 +107,6 @@ private:
     RCT (* _f)( T &);
 public:
     StatelessMutator( RCT (*f)(T &) ) : _f(f) {}
-
     virtual RCT eval( T & m ) override {
         return _f( m );
     }
@@ -111,7 +118,6 @@ private:
     typename Traits<T>::Routing::ResultCode (* _f)( T &);
 public:
     StatelessMutator( typename Traits<T>::Routing::ResultCode (*f)(T &) ) : _f(f) {}
-
     virtual typename Traits<T>::Routing::ResultCode eval( T & m ) override {
         return _f( m );
     }
@@ -123,7 +129,6 @@ private:
     void (* _f)( T &);
 public:
     StatelessMutator( void (*f)(T &) ) : _f(f) {}
-
     virtual typename Traits<T>::Routing::ResultCode eval( T & m ) override {
         _f( m );
         return 0;
@@ -135,64 +140,43 @@ public:
 ///////////
 
 template<typename T>
-class Pipe : public std::vector< iProcessor<T> * > {
+class Pipe : public std::vector<iProcessor<T>*> {
 public:
     Pipe() {}
-    Pipe( iProcessor<T> * p ) {
-        this->push_back( p );
-    }
+    Pipe( const Pipe & o ) : std::vector<iProcessor<T>*>(o) {}
 
-    void eval_on_msg( T & m ) {
+    typename Traits<T>::Routing::ResultCode
+    process_message( T & m ) {
         typename Traits<T>::Routing::ResultCode rc;
         for( auto it = this->begin(); this->end() != it; ++it ) {
-            if( Traits<T>::Routing::do_interrupt( rc = (*it)->eval( m ) ) ) {
-                break;
+            if( Traits<T>::Routing::do_stop_propagation( rc = (*it)->eval( m ) ) ) {
+                return rc;
+            }
+        }
+    }
+
+    template<typename SourceT>
+    void process_source( T * s, SourceT src ) {
+        typename Traits<T>::Routing::ResultCode rc;
+        while(SourceTraits<T, SourceT>::has_message(src)) {
+            if( Traits<T>::Routing::do_stop_iteration( rc = process_message(
+                            SourceTraits<T, SourceT>::get_message_ref(src) ) )
+              ) {
+                return rc;
             }
         }
     }
 };  // Pipe
 
-// Keeps track of processors lifetime
-template<typename T>
-class EvaluationProxy : public std::list<iProcessor<T>*> {
-protected:
-    Pipe<T> * _pipe;
-public:
-    // TODO: enable if downcast to iProcessor is possible:
-    template<typename PT> void emplace( const PT & p ) {
-        PT * copyPtr = new PT(p);
-        this->push_back(copyPtr);
-        _pipe->push_back(copyPtr);
-    }
-};  // EvaluationProxy
-
-// In-place ctr of pipeline for two processors
-template<typename T> EvaluationProxy<T>
-operator|( iProcessor<T> & p1, iProcessor<T> & p2 ) {
-    Pipe<T> p(&p1);
-    p.push_back(&p2);
+template<typename T> Pipe<T> &
+operator<<( Pipe<T> & p, T & m ) {
+    p.process_message(m);
     return p;
-}
-
-template<typename T> EvaluationProxy<T> &
-operator|( EvaluationProxy<T> & p, iProcessor<T> && proc ) {
-    p.push_back( &proc );
-    return p;
-}
-
-template<typename T, typename RCT> EvaluationProxy<T> &
-operator|( Pipe<T> & p, RCT(*f)(T &) ) {
-    return p | StatelessMutator<T, RCT>(f);
-}
-
-template<typename T, typename RCT> Pipe<T> &
-operator|( Pipe<T> & p, RCT(*f)(const T &) ) {
-    return p | StatelessObserver<T, RCT>(f);
 }
 
 template<typename T> Pipe<T> &
 operator<<( Pipe<T> & p, T && m ) {
-    p.eval_on_msg( m );
+    p.process_message(m);
     return p;
 }
 

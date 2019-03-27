@@ -28,10 +28,10 @@ _print_event( const MyEvent & eve ) {
 int
 main(int argc, char * argv[]) {
     ppt::Pipe<MyEvent> p;
-    ( p 
-    | _conditional_mutator
-    | _print_event ) << MyEvent{  1, 1, 1, NAN }
-                     << MyEvent{ -1, 1, 1, NAN }
-                     ;
+    p.push_back( new ppt::StatelessMutator<MyEvent, int>(_conditional_mutator) );
+    p.push_back( new ppt::StatelessObserver<MyEvent, void>(_print_event) );
+    p << MyEvent{  1, 1, 1, NAN }
+      << MyEvent{ -1, 1, 1, NAN }
+      ;
 }
 

@@ -9,8 +9,9 @@ struct MyMessage {
 };
 
 // Simple functional mutator
-static void _simple_mutator( MyMessage & m ) {
+static ppt::Traits<MyMessage>::Routing::ResultCode _simple_mutator( MyMessage & m ) {
     m.v += 10;
+    return 0;
 }
 
 // Simple min/max observer
@@ -32,10 +33,11 @@ public:
 // Entry point
 int
 main(int argc, char * argv[]) {
+    ppt::Pipe<MyMessage> p;
+    p.push_back( new ValueMin() );
+    p.push_back( new ppt::StatelessMutator<MyMessage, int>(_simple_mutator) );
     MyMessage msgs[] = { {1}, {2} };
-    std::cout << "min:" << ( ( ValueMin()
-                             | _simple_mutator
-                             ) << msgs[0] << msgs[1])[0]->as<ValueMin>().get_min()
+    std::cout << "min:" << ( p << msgs[0] << msgs[1])[0]->as<ValueMin>().get_min()
               << std::endl
               ;
 }
