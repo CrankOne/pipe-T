@@ -12,12 +12,12 @@ static ppt::Traits<MyEvent>::Routing::ResultCode
 _conditional_mutator( MyEvent & eve ) {
     if( eve.r[0] > 0 ) {
         eve.norm = sqrt( eve.r[0]*eve.r[0]
-                   + eve.r[1]*eve.r[1]
-                   + eve.r[2]*eve.r[2]
-                   );
+                       + eve.r[1]*eve.r[1]
+                       + eve.r[2]*eve.r[2]
+                       );
         return 0;
     }
-    return ppt::Traits<MyEvent>::Routing::intactFlag;
+    return ppt::Traits<MyEvent>::Routing::mark_intact(0);
 }
 
 static void

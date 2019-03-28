@@ -22,9 +22,10 @@ public:
     ValueMin() : _min(+INFINITY) {}
     ~ValueMin() {}
 
-    virtual typename ppt::Traits<MyMessage>::Routing::ResultCode observe( const MyMessage & m ) override {
+    virtual typename ppt::Traits<MyMessage>::Routing::ResultCode
+    eval( const MyMessage & m ) override {
         if( _min > m.v || std::isnan(_min) ) _min = m.v;
-        return 0;
+        return ppt::Traits<MyMessage>::Routing::mark_intact( 0 );
     }
 
     float get_min() const { return _min; }
