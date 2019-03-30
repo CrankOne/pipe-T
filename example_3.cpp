@@ -1,6 +1,7 @@
 # include "new.tcc"
 
 # include <iostream>
+# include <iomanip>
 # include <cstring>
 
 typedef int Value;
@@ -13,14 +14,14 @@ struct Histogram1D : public ppt::iObserver<Value> {
         memset( counts, 0, sizeof(counts) );
     }
 
-    virtual typename ValueTraits::ResultCode eval( const Value & v ) override {
-        ++counts[ int( float(v) / RAND_MAX ) ];
+    virtual typename ValueTraits::ResultCode eval( Value v ) override {
+        ++counts[ int(10*(float(v) / RAND_MAX)) ];
         return ValueTraits::mark_intact(0);
     }
 };
 
 static ValueTraits::ResultCode
-_simple_discriminator( const Value & v ) {
+_simple_discriminator( Value v ) {
     if( v > RAND_MAX/2 ) {
         return ValueTraits::mark_intact( ppt::DefaultRoutingFlags::noPropFlag );
     } else {
@@ -35,8 +36,14 @@ main(int argc, char * argv[]) {
     p.push_back( new ppt::StatelessObserver<Value, int>(_simple_discriminator) );
     p.push_back( new Histogram1D() );
 
+    assert( p.is_observer() );
+
     for( unsigned int i = 0; i < 1e5; ++i ) {
         p.eval( rand() );
+    }
+    for( unsigned char i = 0; i < 10; ++i ) {
+        std::cout << std::setw(10) << p[0]->as<Histogram1D>().counts[i] << ", "
+                  << std::setw(10) << p[2]->as<Histogram1D>().counts[i] << std::endl;
     }
 }
 
