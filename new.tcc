@@ -47,14 +47,16 @@ struct Traits {
 
 template<typename T> struct Traits<const T> : public Traits<T> {};
 
-template<typename T, typename SourceT>
-struct ExtractionTraits {
+template<typename T, typename SourceT> struct ExtractionTraits;
+# if 0
+{
     // Performs the loop-like processing of the given source with given
     // pipeline.
     static typename Traits<SourceT>::Routing::ResultCode process( SourceT & src, Pipe<T> & p );
     // Might be defined to pack back the modified messages.
     //pack()  ... TODO
 };
+# endif
 
 //
 // Processors
@@ -249,7 +251,7 @@ _eval_pipe_on( Pipe<T> * p
 template<typename T> typename std::enable_if< std::is_const<T>::value
                                             , typename Traits<T>::Routing::ResultCode >::type
 _eval_pipe_on( Pipe<T> * p
-             , typename Traits<T>::Ref m
+             , typename Traits<T>::CRef m
              , typename Traits<T>::Routing::ResultCode & rc ) {
     for( auto it = p->begin(); p->end() != it; ++it ) {
         assert( (*it)->is_observer() );
@@ -319,7 +321,7 @@ public:
     Span( const Pipe<InT> & p ) : Pipe<InT>(p) {}
 
     virtual typename Traits<OutT>::Routing::ResultCode
-    eval( typename iProcessor<OutT>::RefType m ) override {
+    eval( typename Traits<OutT>::Ref m ) override {
         Recorder r(this, m);
         // Make a temporary copy of the pipe with recorder processor appended.
         Pipe<InT> pCopy(*this);
@@ -335,13 +337,14 @@ class Span<const OutT, InT> : public iObserver<OutT>
                             , public Pipe<InT> {
     // This assert shall check the case when outern type is supposed to be
     // const, while intern type is supposed to be mutable
-    static_assert(!std::is_const<InT>::value);
+    static_assert( std::is_const<InT>::value
+                 , "Spanning observer with mutable internal part." );
 public:
     Span( const Pipe<InT> & p ) : Pipe<InT>(p) {}
 
     virtual typename Traits<const OutT>::Routing::ResultCode
-    eval( typename iProcessor<const OutT>::RefType m ) override {
-        return ExtractionTraits<InT, OutT>::process( m, *this );
+    eval( typename Traits<const OutT>::CRef m ) override {
+        return ExtractionTraits<InT, const OutT>::process( m, *this );
     }
 };
 
@@ -350,13 +353,13 @@ public:
 //////////////////
 
 template<typename T> Pipe<T> &
-operator<<( Pipe<T> & p, T & m ) {
+operator<<( Pipe<T> & p, typename Traits<T>::Ref m ) {
     p(m);
     return p;
 }
 
 template<typename T> Pipe<T> &
-operator<<( Pipe<T> & p, T && m ) {
+operator<<( Pipe<T> & p, typename Traits<T>::RRef m ) {
     p(m);
     return p;
 }

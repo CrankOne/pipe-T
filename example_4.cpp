@@ -9,9 +9,9 @@ struct Event {
 
 namespace ppt {
 template<>
-struct ExtractionTraits<double, Event> {
+struct ExtractionTraits<const double, const Event> {
     static Traits<Event>::Routing::ResultCode
-    process( Event & e, Pipe<double> & p ) {
+    process( const Event & e, Pipe<const double> & p ) {
         for( unsigned int i = 0; i < 3; ++i ) {
             p << ( (double *) e.data )[i];
         }
@@ -40,9 +40,9 @@ main(int argc, char * argv[]) {
     // ...
     // Build the pipelines
     ppt::Pipe<const Event> p;  // outern
-    ppt::Pipe<double> ip;  // intern pipeline
+    ppt::Pipe<const double> ip;  // intern pipeline
     ip.push_back( new Histogram1D() );
-    p.push_back( new ppt::Span<Event, double>(ip) );
+    p.push_back( new ppt::Span<const Event, const double>(ip) );
     // Process events
     for( unsigned int i = 0; i < sizeof(events)/sizeof(*events); ++i ) {
         p << events[i];

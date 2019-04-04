@@ -11,7 +11,10 @@ example2: example_2.cpp
 example3: example_3.cpp
 	g++ $(CXXFLAGS) $^ -o $@
 
+example4: example_4.cpp
+	g++ $(CXXFLAGS) $^ -o $@
+
 clean:
-	rm -f example1 example2 example3
+	rm -f example1 example2 example3 example4
 
 .PHONY: all clean
