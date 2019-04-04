@@ -4,6 +4,8 @@
 
 namespace ppt {
 
+template<typename T> class Pipe;
+
 struct DefaultRoutingFlags {
     static constexpr int noPropFlag = 0x1
                        , noNextFlag = 0x2
@@ -40,11 +42,19 @@ struct Traits {
     typedef typename std::conditional<std::is_arithmetic<T>::value, T, const T & >::type CRef;
     typedef typename std::conditional<std::is_const<T>::value
                                      , CRef, T &>::type Ref;
-    typedef T && RRef;
+    typedef T && RRef;  // XXX?
 };
 
+template<typename T> struct Traits<const T> : public Traits<T> {};
+
 template<typename T, typename SourceT>
-struct ExtractionTraits;
+struct ExtractionTraits {
+    // Performs the loop-like processing of the given source with given
+    // pipeline.
+    static typename Traits<SourceT>::Routing::ResultCode process( SourceT & src, Pipe<T> & p );
+    // Might be defined to pack back the modified messages.
+    //pack()  ... TODO
+};
 
 //
 // Processors
@@ -76,10 +86,23 @@ public:
 template<typename T>
 class iProcessor : public AbstractProcessor<typename std::remove_const<T>::type> {
 public:
+    typedef typename Traits<T>::Ref RefType;
     iProcessor() : AbstractProcessor<typename std::remove_const<T>::type>(
                 std::is_const<T>::value ) {}
-    virtual typename Traits<T>::Routing::ResultCode eval( typename Traits<T>::Ref ) = 0;
-    typename Traits<T>::Routing::ResultCode operator()( typename Traits<T>::Ref m ) {
+    virtual typename Traits<T>::Routing::ResultCode eval( RefType ) = 0;
+    typename Traits<T>::Routing::ResultCode operator()( RefType m ) {
+        return Traits<T>::Routing::mark_intact( eval(m) );
+    }
+};  // iProcessor
+
+template<typename T>
+class iProcessor<const T> : public AbstractProcessor<typename std::remove_const<T>::type> {
+public:
+    typedef typename Traits<T>::CRef RefType;
+    iProcessor() : AbstractProcessor<typename std::remove_const<T>::type>(
+                std::is_const<T>::value ) {}
+    virtual typename Traits<T>::Routing::ResultCode eval( RefType ) = 0;
+    typename Traits<T>::Routing::ResultCode operator()( RefType m ) {
         return Traits<T>::Routing::mark_intact( eval(m) );
     }
 };  // iProcessor
@@ -132,8 +155,7 @@ public:
 // Processors affecting the data (mutators)
 
 template<typename T>
-class iMutator : public iProcessor<T> {
-};  // iMutator
+class iMutator : public iProcessor<T> { };  // iMutator
 
 template<typename T, typename RCT>
 class StatelessMutator : public iMutator<T> {
@@ -180,18 +202,26 @@ class Pipe : public std::conditional< std::is_const<T>::value
                                     , iMutator<T> >::type
            , public std::vector<AbstractProcessor<typename std::remove_const<T>::type>*> {
 public:
+    typedef typename iProcessor<T>::RefType RefType;
+protected:
+    typename Traits<T>::Routing::ResultCode _rc;
+public:
     Pipe() {}
-    Pipe( const Pipe & o ) : std::vector<iProcessor<T>*>(o) {}
+    Pipe( const Pipe & o ) : std::vector<AbstractProcessor<typename std::remove_const<T>::type>*>(o) {}
 
     virtual typename Traits<T>::Routing::ResultCode
-    eval( typename Traits<T>::Ref m ) override { return eval_pipe_on( this, m ); }
+    eval( RefType m ) override {
+        return _eval_pipe_on( this, m, _rc ); }
+    typename Traits<T>::Routing::ResultCode lates_result_code() const {
+        return _rc; }
 };  // Pipe
 
 // Eval pipe with mutators
 template<typename T> typename std::enable_if< ! std::is_const<T>::value
                                             , typename Traits<T>::Routing::ResultCode >::type
-eval_pipe_on( Pipe<T> * p, typename Traits<T>::Ref m ) {
-    typename Traits<T>::Routing::ResultCode rc;
+_eval_pipe_on( Pipe<T> * p
+             , typename Traits<T>::Ref m
+             , typename Traits<T>::Routing::ResultCode & rc ) {
     bool modified = false;
     for( auto it = p->begin(); p->end() != it; ++it ) {
         rc = (*it)->is_observer()
@@ -218,26 +248,29 @@ eval_pipe_on( Pipe<T> * p, typename Traits<T>::Ref m ) {
 // Eval pipe with observers only
 template<typename T> typename std::enable_if< std::is_const<T>::value
                                             , typename Traits<T>::Routing::ResultCode >::type
-eval_pipe_on( Pipe<T> * p, typename Traits<T>::Ref m ) {
-    typename Traits<T>::Routing::ResultCode rc;
+_eval_pipe_on( Pipe<T> * p
+             , typename Traits<T>::Ref m
+             , typename Traits<T>::Routing::ResultCode & rc ) {
     for( auto it = p->begin(); p->end() != it; ++it ) {
         assert( (*it)->is_observer() );
         rc = static_cast<iProcessor<const T>*>(*it)->eval(m);
         if(Traits<T>::Routing::do_stop_propagation( rc )) {
             return Traits<T>::Routing::mark_intact( rc );
         }
-        assert( !Traits<T>::Routing::was_modified( rc ) );
+        assert( !Traits<T>::Routing::was_modified( rc ) );  // transformations forbidden
     }
     return Traits<T>::Routing::mark_intact( 0 );
 }
 
+# if 0
 template< typename T
         , typename SourceT> typename Traits<SourceT>::Routing::ResultCode
 eval_on_source( Pipe<T> * p, SourceT src ) {
     bool modified = false;
     typename Traits<T>::Routing::ResultCode rc;
     for( auto it = ExtractionTraits<T, SourceT>::begin(src)
-       ; it != ExtractionTraits<T, SourceT>::end(src); ++it ) {
+       ; it != ExtractionTraits<T, SourceT>::end(src)
+       ; ++it ) {
         rc = process_message(ExtractionTraits<T, SourceT>::get_message_ref(it));
         if( Traits<T>::Routing::was_modified(rc) ) {
             modified = true;
@@ -254,19 +287,61 @@ eval_on_source( Pipe<T> * p, SourceT src ) {
                     : Traits<SourceT>::mark_intact(srcRc)
                     ;
 }
+# endif
 
 //
-// (Un-)packing sub-pipeline: transforms one message type (OutT to another
-// (InT), runs the pipeline and, if changes were made, packs it back.
+// Repacking pipeline: transforms one message type (OutT to another
+// (InT), runs the pipeline and, if changes were made, packs it back, the InT
+// to OutT. Typical use case is the de-compression.
 template< typename OutT  //< outern (encompassing) type
         , typename InT  //< intern (target) type
         >
-class Span : public iProcessor<OutT>
+class Span : public iMutator<OutT>
            , public Pipe<InT> {
 public:
+    // Helper temporary process, intrinsicly added to the end of pipeline copy
+    // made
+    class Recorder : public iProcessor<InT> {
+    private:
+        Pipe<InT> * _p;
+        typename Traits<OutT>::Ref _container;
+    public:
+        Recorder( Pipe<InT> * p
+                , typename Traits<OutT>::Ref container ) : _p(p), _container(container) {}
+        typename Traits<InT>::Routing::ResultCode eval( typename Traits<InT>::Ref m ) {
+            if( Traits<InT>::Routing::was_modified( _p->lates_result_code() ) ) {
+                return ExtractionTraits<InT, OutT>::pack( _container, m );
+            }
+            return Traits<InT>::Routing::mark_intact(0x0);
+        }
+    };
+public:
+    Span( const Pipe<InT> & p ) : Pipe<InT>(p) {}
+
     virtual typename Traits<OutT>::Routing::ResultCode
-    eval( typename Traits<OutT>::Ref m ) override {
-        return eval_on_source<InT, OutT>( *this, m );
+    eval( typename iProcessor<OutT>::RefType m ) override {
+        Recorder r(this, m);
+        // Make a temporary copy of the pipe with recorder processor appended.
+        Pipe<InT> pCopy(*this);
+        pCopy.push_back( &r );
+        return ExtractionTraits<InT, OutT>::process( m, pCopy );
+    }
+};
+
+template< typename OutT
+        , typename InT
+        >
+class Span<const OutT, InT> : public iObserver<OutT>
+                            , public Pipe<InT> {
+    // This assert shall check the case when outern type is supposed to be
+    // const, while intern type is supposed to be mutable
+    static_assert(!std::is_const<InT>::value);
+public:
+    Span( const Pipe<InT> & p ) : Pipe<InT>(p) {}
+
+    virtual typename Traits<const OutT>::Routing::ResultCode
+    eval( typename iProcessor<const OutT>::RefType m ) override {
+        return ExtractionTraits<InT, OutT>::process( m, *this );
     }
 };
 
