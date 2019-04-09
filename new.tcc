@@ -259,7 +259,7 @@ _eval_pipe_on( Pipe<T> * p
         if(Traits<T>::Routing::do_stop_propagation( rc )) {
             return Traits<T>::Routing::mark_intact( rc );
         }
-        assert( !Traits<T>::Routing::was_modified( rc ) );  // transformations forbidden
+        assert( ! Traits<T>::Routing::was_modified( rc ) );  // transformations forbidden
     }
     return Traits<T>::Routing::mark_intact( 0 );
 }

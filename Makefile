@@ -1,6 +1,6 @@
 CXXFLAGS=-g -Wall
 
-all: example1 example2 example3
+all: example1 example2 example3 example4
 
 example1: example_1.cpp
 	g++ $(CXXFLAGS) $^ -o $@

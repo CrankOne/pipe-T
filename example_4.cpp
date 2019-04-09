@@ -8,6 +8,7 @@ struct Event {
 };
 
 namespace ppt {
+// Extraction traits describe how the data may be (re-) packed.
 template<>
 struct ExtractionTraits<const double, const Event> {
     static Traits<Event>::Routing::ResultCode
