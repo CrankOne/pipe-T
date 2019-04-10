@@ -2,6 +2,7 @@
 
 # include <cstring>
 # include <cstdlib>
+# include <iostream>
 
 struct Event {
     unsigned char data[3*sizeof(double)];
@@ -16,7 +17,7 @@ struct ExtractionTraits<const double, const Event> {
         for( unsigned int i = 0; i < 3; ++i ) {
             p << ( (double *) e.data )[i];
         }
-        return 0x0;
+        return ppt::Traits<double>::Routing::mark_intact(0);
     }
 };
 }
@@ -36,17 +37,26 @@ struct Histogram1D : public ppt::iObserver<double> {
 
 int
 main(int argc, char * argv[]) {
+    Histogram1D * hstPtr;
     // Initialize events to process
-    Event events[10];
-    // ...
+    Event events[1000];
+    for( size_t i = 0; i < sizeof(events)/sizeof(*events); ++i ) {
+        ((double *) events[i].data)[0] = rand();
+        ((double *) events[i].data)[1] = rand();
+        ((double *) events[i].data)[2] = rand();
+    }
     // Build the pipelines
     ppt::Pipe<const Event> p;  // outern
     ppt::Pipe<const double> ip;  // intern pipeline
-    ip.push_back( new Histogram1D() );
+    ip.push_back( hstPtr = new Histogram1D() );
     p.push_back( new ppt::Span<const Event, const double>(ip) );
     // Process events
     for( unsigned int i = 0; i < sizeof(events)/sizeof(*events); ++i ) {
         p << events[i];
+    }
+    // Print the stats
+    for( size_t i = 0; i < sizeof(Histogram1D::counts)/sizeof(*hstPtr->counts); ++i ) {
+        std::cout << hstPtr->counts[i] << std::endl;
     }
     return 0;
 }

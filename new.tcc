@@ -101,8 +101,7 @@ template<typename T>
 class iProcessor<const T> : public AbstractProcessor<typename std::remove_const<T>::type> {
 public:
     typedef typename Traits<T>::CRef RefType;
-    iProcessor() : AbstractProcessor<typename std::remove_const<T>::type>(
-                std::is_const<T>::value ) {}
+    iProcessor() : AbstractProcessor<typename std::remove_const<T>::type>( true ) {}
     virtual typename Traits<T>::Routing::ResultCode eval( RefType ) = 0;
     typename Traits<T>::Routing::ResultCode operator()( RefType m ) {
         return Traits<T>::Routing::mark_intact( eval(m) );

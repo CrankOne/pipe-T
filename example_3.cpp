@@ -32,11 +32,12 @@ _simple_discriminator( Value v ) {
 int
 main(int argc, char * argv[]) {
     ppt::Pipe<const Value> p;
+
+    assert( p.is_observer() );
+
     p.push_back( new Histogram1D() );
     p.push_back( new ppt::StatelessObserver<Value, int>(_simple_discriminator) );
     p.push_back( new Histogram1D() );
-
-    assert( p.is_observer() );
 
     for( unsigned int i = 0; i < 1e5; ++i ) {
         p.eval( rand() );
