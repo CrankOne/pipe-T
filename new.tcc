@@ -1,6 +1,8 @@
 # include <vector>
 # include <list>
 # include <cassert>
+# include <thread>
+# include <condition_variable>
 
 namespace ppt {
 
@@ -45,6 +47,7 @@ struct Traits {
     typedef T && RRef;  // XXX?
 };
 
+// const T and non-const T traits are equivalent
 template<typename T> struct Traits<const T> : public Traits<T> {};
 
 template<typename T, typename SourceT> struct ExtractionTraits;
@@ -70,18 +73,23 @@ template<typename T, typename SourceT> struct ExtractionTraits;
 //  - (un-)packer -- transforms one message type into another
 
 // Provides basic introspection for downcasting the type: observer/mutator
-template<typename T>
+template< typename T >
 class AbstractProcessor {
 private:
     const bool _isObserver;
+    bool _isVacant;  ///< Used in addition with CV to prevent SWU
+    std::condition_variable _busyCV;
 protected:
     AbstractProcessor( bool isObserver ) : _isObserver(isObserver) {}
+    AbstractProcessor( const AbstractProcessor<T> & o ) : _isObserver(o._isObserver), _busyCV() {}
 public:
     virtual ~AbstractProcessor(){}
     // Use it to downcast processor instance to common type
     template<typename PT> PT as() { return dynamic_cast<PT&>(*this); }
     // Returns, whether the processor instance is observer.
     bool is_observer() const { return _isObserver; }
+    bool is_vacant() const { return _isVacant; }
+    std::condition_variable & busy_CV() { return _busyCV; }
 };  // AbstractProcessor
 
 // Generic processor interface
@@ -89,9 +97,15 @@ template<typename T>
 class iProcessor : public AbstractProcessor<typename std::remove_const<T>::type> {
 public:
     typedef typename Traits<T>::Ref RefType;
+protected:
+    virtual typename Traits<T>::Routing::ResultCode _V_eval( RefType ) = 0;
+public:
     iProcessor() : AbstractProcessor<typename std::remove_const<T>::type>(
                 std::is_const<T>::value ) {}
-    virtual typename Traits<T>::Routing::ResultCode eval( RefType ) = 0;
+    virtual typename Traits<T>::Routing::ResultCode eval( RefType m ) {
+        // TODO: lock
+        return _V_eval( m );
+    }
     typename Traits<T>::Routing::ResultCode operator()( RefType m ) {
         return Traits<T>::Routing::mark_intact( eval(m) );
     }
@@ -101,8 +115,14 @@ template<typename T>
 class iProcessor<const T> : public AbstractProcessor<typename std::remove_const<T>::type> {
 public:
     typedef typename Traits<T>::CRef RefType;
+protected:
+    virtual typename Traits<T>::Routing::ResultCode _V_eval( RefType ) = 0;
+public:
     iProcessor() : AbstractProcessor<typename std::remove_const<T>::type>( true ) {}
-    virtual typename Traits<T>::Routing::ResultCode eval( RefType ) = 0;
+    virtual typename Traits<T>::Routing::ResultCode eval( RefType m ) {
+        // TODO: lock
+        return _V_eval( m );
+    }
     typename Traits<T>::Routing::ResultCode operator()( RefType m ) {
         return Traits<T>::Routing::mark_intact( eval(m) );
     }
@@ -118,37 +138,38 @@ template<typename T, typename RCT>
 class StatelessObserver : public iObserver<T> {
 private:
     void (* _f)(typename Traits<T>::CRef);
-public:
-    StatelessObserver( void (*f)( typename Traits<T>::CRef ) ) : _f(f) {}
-
-    virtual typename Traits<T>::Routing::ResultCode eval( typename Traits<T>::CRef m ) override {
+protected:
+    virtual typename Traits<T>::Routing::ResultCode _V_eval( typename Traits<T>::CRef m ) override {
         _f( m );
         return Traits<T>::Routing::mark_intact( 0 );
     }
+public:
+    StatelessObserver( void (*f)( typename Traits<T>::CRef ) ) : _f(f) {}
 };  // StatelessObserver
 
 template<typename T>
 class StatelessObserver<T, void> : public iObserver<T> {
 private:
     void (* _f)(typename Traits<T>::CRef);
-public:
-    StatelessObserver( void (*f)(typename Traits<T>::CRef) ) : _f(f) {}
-
-    virtual typename Traits<T>::Routing::ResultCode eval( typename Traits<T>::CRef m ) override {
+protected:
+    virtual typename Traits<T>::Routing::ResultCode _V_eval( typename Traits<T>::CRef m ) override {
         _f( m );
         return Traits<T>::Routing::mark_intact( 0 );
     }
+public:
+    StatelessObserver( void (*f)(typename Traits<T>::CRef) ) : _f(f) {}
 };  // StatelessObserver
 
 template<typename T>
 class StatelessObserver<T, typename Traits<T>::Routing::ResultCode> : public iObserver<T> {
 private:
     typename Traits<T>::Routing::ResultCode (* _f)(typename Traits<T>::CRef);
-public:
-    StatelessObserver( typename Traits<T>::Routing::ResultCode (*f)(typename Traits<T>::CRef) ) : _f(f) {}
-    virtual typename Traits<T>::Routing::ResultCode eval( typename Traits<T>::CRef m ) override {
+protected:
+    virtual typename Traits<T>::Routing::ResultCode _V_eval( typename Traits<T>::CRef m ) override {
         return _f( m );
     }
+public:
+    StatelessObserver( typename Traits<T>::Routing::ResultCode (*f)(typename Traits<T>::CRef) ) : _f(f) {}
 };  // StatelessObserver
 
 
@@ -162,34 +183,37 @@ template<typename T, typename RCT>
 class StatelessMutator : public iMutator<T> {
 private:
     RCT (* _f)(typename Traits<T>::Ref);
-public:
-    StatelessMutator( RCT (*f)(typename Traits<T>::Ref) ) : _f(f) {}
-    virtual RCT eval( typename Traits<T>::Ref m ) override {
+protected:
+    virtual RCT _V_eval( typename Traits<T>::Ref m ) override {
         return _f( m );
     }
+public:
+    StatelessMutator( RCT (*f)(typename Traits<T>::Ref) ) : _f(f) {}
 };  // StatelessMutator
 
 template<typename T>
 class StatelessMutator<T, typename Traits<T>::Routing::ResultCode> : public iMutator<T> {
 private:
     typename Traits<T>::Routing::ResultCode (* _f)(typename Traits<T>::Ref);
-public:
-    StatelessMutator( typename Traits<T>::Routing::ResultCode (*f)(typename Traits<T>::Ref) ) : _f(f) {}
-    virtual typename Traits<T>::Routing::ResultCode eval(typename Traits<T>::Ref m) override {
+protected:
+    virtual typename Traits<T>::Routing::ResultCode _V_eval(typename Traits<T>::Ref m) override {
         return _f( m );
     }
+public:
+    StatelessMutator( typename Traits<T>::Routing::ResultCode (*f)(typename Traits<T>::Ref) ) : _f(f) {}
 };  // StatelessMutator
 
 template<typename T>
 class StatelessMutator<T, void> : public iMutator<T> {
 private:
     void (* _f)(typename Traits<T>::Ref);
-public:
-    StatelessMutator( void (*f)(typename Traits<T>::Ref) ) : _f(f) {}
-    virtual typename Traits<T>::Routing::ResultCode eval(typename Traits<T>::Ref m) override {
+protected:
+    virtual typename Traits<T>::Routing::ResultCode _V_eval(typename Traits<T>::Ref m) override {
         _f( m );
         return 0;
     }
+public:
+    StatelessMutator( void (*f)(typename Traits<T>::Ref) ) : _f(f) {}
 };  // StatelessMutator
 
 //
@@ -206,13 +230,13 @@ public:
     typedef typename iProcessor<T>::RefType RefType;
 protected:
     typename Traits<T>::Routing::ResultCode _rc;
+
+    virtual typename Traits<T>::Routing::ResultCode
+    _V_eval( RefType m ) override {
+        return _eval_pipe_on( this, m, _rc ); }
 public:
     Pipe() {}
     Pipe( const Pipe & o ) : std::vector<AbstractProcessor<typename std::remove_const<T>::type>*>(o) {}
-
-    virtual typename Traits<T>::Routing::ResultCode
-    eval( RefType m ) override {
-        return _eval_pipe_on( this, m, _rc ); }
     typename Traits<T>::Routing::ResultCode lates_result_code() const {
         return _rc; }
 };  // Pipe
@@ -223,12 +247,21 @@ template<typename T> typename std::enable_if< ! std::is_const<T>::value
 _eval_pipe_on( Pipe<T> * p
              , typename Traits<T>::Ref m
              , typename Traits<T>::Routing::ResultCode & rc ) {
+    std::mutex procMtx;
     bool modified = false;
     for( auto it = p->begin(); p->end() != it; ++it ) {
-        rc = (*it)->is_observer()
-           ? static_cast<iProcessor<const T>*>(*it)->eval(m)
-           : static_cast<iProcessor<      T>*>(*it)->eval(m)
-           ;
+        {
+            // whait processor becomes available
+            std::unique_lock<std::mutex> lock(procMtx);
+            while( !(*it)->is_vacant() ) {
+                (*it)->busy_CV().wait( lock );
+            }
+            // eval
+            rc = (*it)->is_observer()
+               ? static_cast<iProcessor<const T>*>(*it)->eval(m)
+               : static_cast<iProcessor<      T>*>(*it)->eval(m)
+               ;
+        }
         if(Traits<T>::Routing::do_stop_propagation( rc )) {
             return modified
                  ? rc
@@ -306,27 +339,28 @@ public:
     private:
         Pipe<InT> * _p;
         typename Traits<OutT>::Ref _container;
-    public:
-        Recorder( Pipe<InT> * p
-                , typename Traits<OutT>::Ref container ) : _p(p), _container(container) {}
-        typename Traits<InT>::Routing::ResultCode eval( typename Traits<InT>::Ref m ) {
+    protected:
+        typename Traits<InT>::Routing::ResultCode _V_eval( typename Traits<InT>::Ref m ) override {
             if( Traits<InT>::Routing::was_modified( _p->lates_result_code() ) ) {
                 return ExtractionTraits<InT, OutT>::pack( _container, m );
             }
             return Traits<InT>::Routing::mark_intact(0x0);
         }
+    public:
+        Recorder( Pipe<InT> * p
+                , typename Traits<OutT>::Ref container ) : _p(p), _container(container) {}
     };
-public:
-    Span( const Pipe<InT> & p ) : Pipe<InT>(p) {}
-
+protected:
     virtual typename Traits<OutT>::Routing::ResultCode
-    eval( typename Traits<OutT>::Ref m ) override {
+    _V_eval( typename Traits<OutT>::Ref m ) override {
         Recorder r(this, m);
         // Make a temporary copy of the pipe with recorder processor appended.
         Pipe<InT> pCopy(*this);
         pCopy.push_back( &r );
         return ExtractionTraits<InT, OutT>::process( m, pCopy );
     }
+public:
+    Span( const Pipe<InT> & p ) : Pipe<InT>(p) {}
 };
 
 template< typename OutT
@@ -338,13 +372,13 @@ class Span<const OutT, InT> : public iObserver<OutT>
     // const, while intern type is supposed to be mutable
     static_assert( std::is_const<InT>::value
                  , "Spanning observer with mutable internal part." );
-public:
-    Span( const Pipe<InT> & p ) : Pipe<InT>(p) {}
-
+protected:
     virtual typename Traits<const OutT>::Routing::ResultCode
-    eval( typename Traits<const OutT>::CRef m ) override {
+    _V_eval( typename Traits<const OutT>::CRef m ) override {
         return ExtractionTraits<InT, const OutT>::process( m, *this );
     }
+public:
+    Span( const Pipe<InT> & p ) : Pipe<InT>(p) {}
 };
 
 //

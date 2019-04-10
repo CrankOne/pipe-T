@@ -14,7 +14,7 @@ struct Histogram1D : public ppt::iObserver<Value> {
         memset( counts, 0, sizeof(counts) );
     }
 
-    virtual typename ValueTraits::ResultCode eval( Value v ) override {
+    virtual typename ValueTraits::ResultCode _V_eval( Value v ) override {
         ++counts[ int(10*(float(v) / RAND_MAX)) ];
         return ValueTraits::mark_intact(0);
     }

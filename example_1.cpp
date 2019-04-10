@@ -18,15 +18,15 @@ static ppt::Traits<MyMessage>::Routing::ResultCode _simple_mutator( MyMessage & 
 class ValueMin : public ppt::iObserver<MyMessage> {
 private:
     float _min;
-public:
-    ValueMin() : _min(+INFINITY) {}
-    ~ValueMin() {}
-
+protected:
     virtual typename ppt::Traits<MyMessage>::Routing::ResultCode
-    eval( const MyMessage & m ) override {
+    _V_eval( const MyMessage & m ) override {
         if( _min > m.v || std::isnan(_min) ) _min = m.v;
         return ppt::Traits<MyMessage>::Routing::mark_intact( 0 );
     }
+public:
+    ValueMin() : _min(+INFINITY) {}
+    ~ValueMin() {}
 
     float get_min() const { return _min; }
 };

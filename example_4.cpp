@@ -29,7 +29,9 @@ struct Histogram1D : public ppt::iObserver<double> {
         memset( counts, 0, sizeof(counts) );
     }
 
-    virtual typename ppt::Traits<double>::Routing::ResultCode eval( double v ) override {
+protected:
+    virtual typename ppt::Traits<double>::Routing::ResultCode
+    _V_eval( double v ) override {
         ++counts[ int(10*(float(v) / RAND_MAX)) ];
         return ppt::Traits<double>::Routing::mark_intact(0);
     }
