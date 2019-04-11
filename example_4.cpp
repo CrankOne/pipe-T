@@ -52,6 +52,9 @@ main(int argc, char * argv[]) {
     ppt::Pipe<const double> ip;  // intern pipeline
     ip.push_back( hstPtr = new Histogram1D() );
     p.push_back( new ppt::Span<const Event, const double>(ip) );
+    // Assign journal
+    typename ppt::Traits<const Event>::Journal j;
+    p.assign_journal(j);
     // Process events
     for( unsigned int i = 0; i < sizeof(events)/sizeof(*events); ++i ) {
         p << events[i];
@@ -60,6 +63,7 @@ main(int argc, char * argv[]) {
     for( size_t i = 0; i < sizeof(Histogram1D::counts)/sizeof(*hstPtr->counts); ++i ) {
         std::cout << hstPtr->counts[i] << std::endl;
     }
+    j.print(std::cout);
     return 0;
 }
 

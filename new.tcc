@@ -3,8 +3,11 @@
 # include <cassert>
 # include <thread>
 # include <condition_variable>
+# include <iomanip>
 
 namespace ppt {
+
+namespace journaling { template<typename T> class Journal; }
 
 template<typename T> class Pipe;
 
@@ -42,13 +45,65 @@ template<typename T>
 struct Traits {
     typedef DefaultRoutingTraits Routing;
     typedef typename std::conditional<std::is_arithmetic<T>::value, T, const T & >::type CRef;
-    typedef typename std::conditional<std::is_const<T>::value
-                                     , CRef, T &>::type Ref;
-    typedef T && RRef;  // XXX?
+    typedef T &  Ref;
+    typedef T && RRef;
+
+    typedef unsigned long MessageID;
+    static MessageID message_id( CRef m ) { return (MessageID) (&m); }
+    typedef ::ppt::journaling::Journal<T> Journal;
 };
 
 // const T and non-const T traits are equivalent
 template<typename T> struct Traits<const T> : public Traits<T> {};
+
+//
+// Journaling
+////////////
+
+namespace journaling {
+enum EntryType {
+    unspecified = 0,
+    procBgn, procEnd,
+    // ...
+};
+
+template<typename MsgIDT>
+struct Entry {
+    std::clock_t time;
+    void * issuer;
+    EntryType type;
+    MsgIDT msgID;
+    // ...
+};
+
+template<typename T>
+class Journal : public std::vector< Entry<typename Traits<T>::MessageID> > {
+public:
+    typedef Entry<typename Traits<T>::MessageID> ThisEntry;
+private:
+    std::mutex _mtx;
+public:
+    void new_entry( EntryType et, void * p ) {
+        std::unique_lock<std::mutex> lock(_mtx);
+        std::vector<ThisEntry>::push_back( ThisEntry{ std::clock(), p, et, 0 } );
+    }
+    void new_entry( EntryType et, void * p, typename Traits<T>::MessageID mid ) {
+        std::unique_lock<std::mutex> lock(_mtx);
+        std::vector<ThisEntry>::push_back( ThisEntry{ std::clock(), p, et, mid } );
+    }
+    void print( std::ostream & os ) {
+        for( auto & e : *this ) {
+            os << e.time
+               << ":" << std::hex << std::setw(16) << e.issuer << std::dec
+               << " " << e.type
+               << " " << e.msgID
+               << std::endl
+               ;
+        }
+    }
+};
+}  // namespace journaling
+# define JOURNAL_ENTRY( tp, procPtr ) if(this->has_journal()) this->journal().new_entry(::ppt::journaling::tp, procPtr);
 
 template<typename T, typename SourceT> struct ExtractionTraits;
 # if 0
@@ -78,18 +133,38 @@ class AbstractProcessor {
 private:
     const bool _isObserver;
     bool _isVacant;  ///< Used in addition with CV to prevent SWU
+    std::mutex _busyMtx;
     std::condition_variable _busyCV;
+    typename Traits<T>::Journal * _jPtr;
 protected:
-    AbstractProcessor( bool isObserver ) : _isObserver(isObserver) {}
-    AbstractProcessor( const AbstractProcessor<T> & o ) : _isObserver(o._isObserver), _busyCV() {}
+    void _set_vacant(bool v) { _isVacant = v; }
+    AbstractProcessor( bool isObserver ) : _isObserver(isObserver)
+                                         , _isVacant(true)
+                                         , _jPtr(nullptr) {}
+    AbstractProcessor( const AbstractProcessor<T> & o ) : _isObserver(o._isObserver)
+                                                        , _isVacant(true)
+                                                        , _busyCV()
+                                                        , _jPtr(nullptr) {}
 public:
     virtual ~AbstractProcessor(){}
-    // Use it to downcast processor instance to common type
+    /// Use it to downcast processor instance to common type
     template<typename PT> PT as() { return dynamic_cast<PT&>(*this); }
-    // Returns, whether the processor instance is observer.
+    /// Returns, whether the processor instance is observer.
     bool is_observer() const { return _isObserver; }
+    /// Returns true if processor instance does not perform evaluation
+    /// currently
     bool is_vacant() const { return _isVacant; }
+    /// Returns "busy" condition variable bound to processor instance
     std::condition_variable & busy_CV() { return _busyCV; }
+    /// Returns mutex guarding "busy" condition variable
+    std::mutex & busy_mutex() { return _busyMtx; }
+    /// Returns true if there is a journal associated with processor instance
+    bool has_journal() const { return _jPtr; }
+    /// Returns reference to journal instance associated. Must be guarded with
+    /// `has_journal()' check, unless null pointer dereferencing is possible.
+    typename Traits<T>::Journal & journal() { return *_jPtr; }
+    /// Sets journal instance.
+    virtual void assign_journal( typename Traits<T>::Journal & j ) { _jPtr = &j; }
 };  // AbstractProcessor
 
 // Generic processor interface
@@ -103,11 +178,17 @@ public:
     iProcessor() : AbstractProcessor<typename std::remove_const<T>::type>(
                 std::is_const<T>::value ) {}
     virtual typename Traits<T>::Routing::ResultCode eval( RefType m ) {
-        // TODO: lock
-        return _V_eval( m );
+        assert( this->is_vacant() );
+        std::unique_lock<std::mutex> lock( this->busy_mutex() );
+        this->_set_vacant(false);
+        JOURNAL_ENTRY( procBgn, this )
+        auto rc = _V_eval( m );
+        JOURNAL_ENTRY( procEnd, this )
+        this->_set_vacant(true);
+        return rc;
     }
     typename Traits<T>::Routing::ResultCode operator()( RefType m ) {
-        return Traits<T>::Routing::mark_intact( eval(m) );
+        return eval(m);
     }
 };  // iProcessor
 
@@ -120,11 +201,17 @@ protected:
 public:
     iProcessor() : AbstractProcessor<typename std::remove_const<T>::type>( true ) {}
     virtual typename Traits<T>::Routing::ResultCode eval( RefType m ) {
-        // TODO: lock
-        return _V_eval( m );
+        assert( this->is_vacant() );
+        std::unique_lock<std::mutex> lock( this->busy_mutex() );
+        this->_set_vacant(false);
+        JOURNAL_ENTRY( procBgn, this )
+        auto rc = _V_eval( m );
+        JOURNAL_ENTRY( procEnd, this )
+        this->_set_vacant(true);
+        return rc;
     }
     typename Traits<T>::Routing::ResultCode operator()( RefType m ) {
-        return Traits<T>::Routing::mark_intact( eval(m) );
+        return eval(m);
     }
 };  // iProcessor
 
@@ -239,6 +326,13 @@ public:
     Pipe( const Pipe & o ) : std::vector<AbstractProcessor<typename std::remove_const<T>::type>*>(o) {}
     typename Traits<T>::Routing::ResultCode lates_result_code() const {
         return _rc; }
+
+    virtual void assign_journal( typename Traits<T>::Journal & j ) override {
+        AbstractProcessor<typename std::remove_const<T>::type>::assign_journal(j);
+        for( auto it = this->begin(); this->end() != it; ++it ) {
+            (*it)->assign_journal(j);
+        }
+    }
 };  // Pipe
 
 // Eval pipe with mutators
@@ -247,21 +341,20 @@ template<typename T> typename std::enable_if< ! std::is_const<T>::value
 _eval_pipe_on( Pipe<T> * p
              , typename Traits<T>::Ref m
              , typename Traits<T>::Routing::ResultCode & rc ) {
-    std::mutex procMtx;
     bool modified = false;
     for( auto it = p->begin(); p->end() != it; ++it ) {
         {
             // whait processor becomes available
-            std::unique_lock<std::mutex> lock(procMtx);
+            std::unique_lock<std::mutex> lock((*it)->busy_mutex());
             while( !(*it)->is_vacant() ) {
                 (*it)->busy_CV().wait( lock );
             }
-            // eval
-            rc = (*it)->is_observer()
-               ? static_cast<iProcessor<const T>*>(*it)->eval(m)
-               : static_cast<iProcessor<      T>*>(*it)->eval(m)
-               ;
         }
+        // eval
+        rc = (*it)->is_observer()
+           ? static_cast<iProcessor<const T>*>(*it)->eval(m)
+           : static_cast<iProcessor<      T>*>(*it)->eval(m)
+           ;
         if(Traits<T>::Routing::do_stop_propagation( rc )) {
             return modified
                  ? rc
