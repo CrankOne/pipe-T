@@ -41,7 +41,7 @@ int
 main(int argc, char * argv[]) {
     Histogram1D * hstPtr;
     // Initialize events to process
-    Event events[1000];
+    Event events[10];
     for( size_t i = 0; i < sizeof(events)/sizeof(*events); ++i ) {
         ((double *) events[i].data)[0] = rand();
         ((double *) events[i].data)[1] = rand();
@@ -52,18 +52,23 @@ main(int argc, char * argv[]) {
     ppt::Pipe<const double> ip;  // intern pipeline
     ip.push_back( hstPtr = new Histogram1D() );
     p.push_back( new ppt::Span<const Event, const double>(ip) );
+    # ifndef PPT_DISABLE_JOUNRALING
     // Assign journal
-    typename ppt::Traits<const Event>::Journal j;
+    typename ppt::journaling::Traits<const Event>::Journal j;
     p.assign_journal(j);
+    # endif
     // Process events
     for( unsigned int i = 0; i < sizeof(events)/sizeof(*events); ++i ) {
         p << events[i];
     }
     // Print the stats
-    for( size_t i = 0; i < sizeof(Histogram1D::counts)/sizeof(*hstPtr->counts); ++i ) {
-        std::cout << hstPtr->counts[i] << std::endl;
-    }
+    //for( size_t i = 0; i < sizeof(Histogram1D::counts)/sizeof(*hstPtr->counts); ++i ) {
+    //    std::cout << hstPtr->counts[i] << std::endl;
+    //}
+    # ifndef PPT_DISABLE_JOUNRALING
+    ppt::journaling::Traits<Event>::print_info( std::cout, p );
     j.print(std::cout);
+    # endif
     return 0;
 }
 

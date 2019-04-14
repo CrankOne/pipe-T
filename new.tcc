@@ -4,13 +4,29 @@
 # include <thread>
 # include <condition_variable>
 # include <iomanip>
+# include <string>
+
+# ifndef PPT_DISABLE_JOUNRALING
+#   include "rapidxml-1.13/rapidxml.hpp"
+    // NOTE: customization to make rapidxml work with modern compilers. See:
+    // https://stackoverflow.com/questions/14113923/rapidxml-print-header-has-undefined-methods
+#   include "rapidxml-1.13/rapidxml_ext.hpp"
+# endif
 
 namespace ppt {
 
+// fwd
+# ifndef PPT_DISABLE_JOUNRALING
 namespace journaling { template<typename T> class Journal; }
-
+# endif
+template<typename T> class AbstractProcessor;
 template<typename T> class Pipe;
 
+/**@brief Constants for common execution status report.
+ *
+ * This is a bit flags, reflecting processing result code. Shall satisfy most
+ * of the practical cases.
+ * */
 struct DefaultRoutingFlags {
     static constexpr int noPropFlag = 0x1
                        , noNextFlag = 0x2
@@ -18,10 +34,13 @@ struct DefaultRoutingFlags {
                        ;
 };
 
+/**@brief Common execution status report.
+ *
+ * Default routing traits shall satisfy most of the practical cases.
+ * */
 struct DefaultRoutingTraits {
     // General processor exit status (ES) type
     typedef int ResultCode;
-
     // Must return true if ES shall stop message propagation through the pipe
     static bool do_stop_propagation( ResultCode rc ) {
         return rc & DefaultRoutingFlags::noPropFlag;
@@ -34,13 +53,16 @@ struct DefaultRoutingTraits {
     static bool was_modified( ResultCode rc ) {
         return !(rc & DefaultRoutingFlags::intactFlag);
     }
-
     // Used by some routines to set "intact" mark on return code
     static ResultCode mark_intact( ResultCode rc ) {
         return rc | DefaultRoutingFlags::intactFlag;
     }
 };
 
+/**@brief General traits defining pipeline.
+ *
+ * This structure holds most of the types relevant for particular message type.
+ * */
 template<typename T>
 struct Traits {
     typedef DefaultRoutingTraits Routing;
@@ -50,23 +72,76 @@ struct Traits {
 
     typedef unsigned long MessageID;
     static MessageID message_id( CRef m ) { return (MessageID) (&m); }
-    typedef ::ppt::journaling::Journal<T> Journal;
 };
 
 // const T and non-const T traits are equivalent
 template<typename T> struct Traits<const T> : public Traits<T> {};
 
+# ifndef PPT_DISABLE_JOUNRALING
 //
 // Journaling
 ////////////
 
 namespace journaling {
+
+template<typename T> struct Traits;
+
+template<typename T>
+struct RapidXMLTraits {
+    typedef ::ppt::journaling::Journal<T> Journal;
+    typedef std::pair< rapidxml::xml_document<> *
+                     , rapidxml::xml_node<> * > NodeRef;
+    /// Adds named sub-node of certain type within the given node.
+    template<typename FT>
+    static void add_field( NodeRef nr
+                         , const char * name
+                         , const char * value ) {
+        rapidxml::xml_node<> * n = nr.first->allocate_node( rapidxml::node_element
+                                               , name
+                                               , nr.first->allocate_string(value) );
+        // NOTE: type are mangled in GCC
+        //rapidxml::xml_attribute<> * typeAttr =
+        //    nr.first->allocate_attribute("type", typeid(T).name() );
+        //n->append_attribute( typeAttr );
+        nr.second->append_node(n);
+    }
+    /// Adds named list sub-node within the given node.
+    static rapidxml::xml_node<> * add_list( NodeRef nr, const char * name ) {
+        auto nn = nr.first->allocate_node( rapidxml::node_element, name );
+        nr.second->append_node(nn);
+        return nn;
+    }
+    /// Shall return new list node, ready for writing. Name has to be related
+    /// to type (node type name).
+    static NodeRef new_list_node( rapidxml::xml_node<> * ln
+                                , NodeRef nr
+                                , const char * name ) {
+        rapidxml::xml_node<> * n =
+            nr.first->allocate_node( rapidxml::node_element, name );
+        ln->append_node( n );
+        return NodeRef(nr.first, n);
+    }
+    static void print_info( std::ostream & os, AbstractProcessor<T> & p ) {
+        rapidxml::xml_document<> doc;
+        rapidxml::xml_node<> * rootNode = doc.allocate_node( rapidxml::node_element, "processor" );
+        p.info( typename journaling::Traits<T>::NodeRef(&doc, rootNode) );
+        doc.append_node(rootNode);
+        rapidxml::print(os, doc, 0);
+    }
+};
+
+/// Set RapidXML to be default codec.
+template<typename T> struct Traits : public RapidXMLTraits<T> {};
+template<typename T> struct Traits<const T> : public Traits<T> {};
+
+/// Journaling entry type code.
 enum EntryType {
     unspecified = 0,
     procBgn, procEnd,
     // ...
 };
 
+/// Journaling entry type parameterised by message ID.
 template<typename MsgIDT>
 struct Entry {
     std::clock_t time;
@@ -76,22 +151,57 @@ struct Entry {
     // ...
 };
 
+/// A container for pipeline journal.
 template<typename T>
-class Journal : public std::vector< Entry<typename Traits<T>::MessageID> > {
+class Journal : public std::vector< Entry<typename ppt::Traits<T>::MessageID> > {
 public:
-    typedef Entry<typename Traits<T>::MessageID> ThisEntry;
+    typedef Entry<typename ppt::Traits<T>::MessageID> ThisEntry;
 private:
+    /// Journal blocking mutex -- prevents from simulaneous access to entries
+    /// container.
     std::mutex _mtx;
 public:
+    /// Creates new journal entry with 0 message ID.
     void new_entry( EntryType et, void * p ) {
         std::unique_lock<std::mutex> lock(_mtx);
         std::vector<ThisEntry>::push_back( ThisEntry{ std::clock(), p, et, 0 } );
     }
-    void new_entry( EntryType et, void * p, typename Traits<T>::MessageID mid ) {
+    /// Creates new journal entry tagged with given message ID.
+    void new_entry( EntryType et, void * p, typename ppt::Traits<T>::MessageID mid ) {
         std::unique_lock<std::mutex> lock(_mtx);
         std::vector<ThisEntry>::push_back( ThisEntry{ std::clock(), p, et, mid } );
     }
+
+    /// Writes the events journal.
+    void dump( typename journaling::Traits<T>::NodeRef nr ) {
+        char bf[32];
+        for( auto & e : *this ) {
+            auto lnr = journaling::Traits<T>::new_list_node( nr.second, nr, "event" );
+            snprintf( bf, sizeof(bf), "%#lx", (long unsigned int) e.time );
+            journaling::Traits<T>::template add_field<clock_t>( lnr, "time",   bf );
+            snprintf( bf, sizeof(bf), "%p", e.issuer );
+            journaling::Traits<T>::template add_field<void *>(  lnr, "issuer", bf );
+            snprintf( bf, sizeof(bf), "%x", e.type );
+            journaling::Traits<T>::template add_field<int>(     lnr, "type",   bf );
+            if( e.msgID ) {
+                snprintf( bf, sizeof(bf), "%#lx", (long unsigned int) e.msgID );
+                journaling::Traits<T>::template add_field<int>( lnr, "msgID", bf );
+            }
+        }
+    }
+
+    /// Prints the journal according to journaling traits.
     void print( std::ostream & os ) {
+        rapidxml::xml_document<> doc;
+        rapidxml::xml_node<> * listNode
+            = doc.allocate_node( rapidxml::node_element, "processingHistory" );
+        dump( typename journaling::Traits<T>::NodeRef(&doc, listNode) );
+        doc.append_node(listNode);
+        rapidxml::print(os, doc, 0);
+    }
+
+    /// Performs a plain ASCII print of the journal.
+    void print_plain_ascii( std::ostream & os ) {
         for( auto & e : *this ) {
             os << e.time
                << ":" << std::hex << std::setw(16) << e.issuer << std::dec
@@ -102,8 +212,12 @@ public:
         }
     }
 };
+
 }  // namespace journaling
 # define JOURNAL_ENTRY( tp, procPtr ) if(this->has_journal()) this->journal().new_entry(::ppt::journaling::tp, procPtr);
+# else
+# define JOURNAL_ENTRY( tp, procPtr ) /* journaling disabled */
+# endif
 
 template<typename T, typename SourceT> struct ExtractionTraits;
 # if 0
@@ -135,7 +249,9 @@ private:
     bool _isVacant;  ///< Used in addition with CV to prevent SWU
     std::mutex _busyMtx;
     std::condition_variable _busyCV;
-    typename Traits<T>::Journal * _jPtr;
+    # ifndef PPT_DISABLE_JOUNRALING
+    typename journaling::Traits<T>::Journal * _jPtr;
+    # endif
 protected:
     void _set_vacant(bool v) { _isVacant = v; }
     AbstractProcessor( bool isObserver ) : _isObserver(isObserver)
@@ -158,13 +274,26 @@ public:
     std::condition_variable & busy_CV() { return _busyCV; }
     /// Returns mutex guarding "busy" condition variable
     std::mutex & busy_mutex() { return _busyMtx; }
+
+    # ifndef PPT_DISABLE_JOUNRALING
     /// Returns true if there is a journal associated with processor instance
     bool has_journal() const { return _jPtr; }
     /// Returns reference to journal instance associated. Must be guarded with
     /// `has_journal()' check, unless null pointer dereferencing is possible.
-    typename Traits<T>::Journal & journal() { return *_jPtr; }
+    typename journaling::Traits<T>::Journal & journal() { return *_jPtr; }
     /// Sets journal instance.
-    virtual void assign_journal( typename Traits<T>::Journal & j ) { _jPtr = &j; }
+    virtual void assign_journal( typename journaling::Traits<T>::Journal & j ) { _jPtr = &j; }
+    /// Appends given document with fields specific for this processor
+    /// instance.
+    virtual void info( typename journaling::Traits<T>::NodeRef d ) const {
+        char bf[32];
+        snprintf( bf, sizeof(bf), "%p", (void *) this );
+        journaling::Traits<T>::template add_field<void *>( d
+                , "address", bf );
+        journaling::Traits<T>::template add_field<bool>( d
+                , "isObesrver", is_observer() ? "true" : "false" );
+    }
+    # endif
 };  // AbstractProcessor
 
 // Generic processor interface
@@ -232,6 +361,11 @@ protected:
     }
 public:
     StatelessObserver( void (*f)( typename Traits<T>::CRef ) ) : _f(f) {}
+
+    virtual void info( typename journaling::Traits<T>::NodeRef d ) const override {
+        iObserver<T>::info(d);
+        journaling::Traits<T>::template add_field<bool>( d, "isStateless", "true" );
+    }
 };  // StatelessObserver
 
 template<typename T>
@@ -245,6 +379,14 @@ protected:
     }
 public:
     StatelessObserver( void (*f)(typename Traits<T>::CRef) ) : _f(f) {}
+
+    # ifndef PPT_DISABLE_JOUNRALING
+    virtual void info( typename journaling::Traits<T>::NodeRef d ) const override {
+        iObserver<T>::info(d);
+        journaling::Traits<T>::template add_field<bool>( d, "isStateless", "true" );
+        journaling::Traits<T>::template add_field<bool>( d, "noResultCode", "true" );
+    }
+    # endif
 };  // StatelessObserver
 
 template<typename T>
@@ -257,6 +399,13 @@ protected:
     }
 public:
     StatelessObserver( typename Traits<T>::Routing::ResultCode (*f)(typename Traits<T>::CRef) ) : _f(f) {}
+
+    # ifndef PPT_DISABLE_JOUNRALING
+    virtual void info( typename journaling::Traits<T>::NodeRef d ) const override {
+        iObserver<T>::info(d);
+        journaling::Traits<T>::template add_field<bool>( d, "isStateless", "true" );
+    }
+    # endif
 };  // StatelessObserver
 
 
@@ -276,6 +425,13 @@ protected:
     }
 public:
     StatelessMutator( RCT (*f)(typename Traits<T>::Ref) ) : _f(f) {}
+
+    # ifndef PPT_DISABLE_JOUNRALING
+    virtual void info( typename journaling::Traits<T>::NodeRef d ) const override {
+        iObserver<T>::info(d);
+        journaling::Traits<T>::template add_field<bool>( d, "isStateless", "true" );
+    }
+    # endif
 };  // StatelessMutator
 
 template<typename T>
@@ -288,6 +444,13 @@ protected:
     }
 public:
     StatelessMutator( typename Traits<T>::Routing::ResultCode (*f)(typename Traits<T>::Ref) ) : _f(f) {}
+    
+    # ifndef PPT_DISABLE_JOUNRALING
+    virtual void info( typename journaling::Traits<T>::NodeRef d ) const override {
+        iMutator<T>::info( d );
+        journaling::Traits<T>::template add_field<bool>( d, "isStateless", "true" );
+    }
+    # endif
 };  // StatelessMutator
 
 template<typename T>
@@ -301,6 +464,14 @@ protected:
     }
 public:
     StatelessMutator( void (*f)(typename Traits<T>::Ref) ) : _f(f) {}
+
+    # ifndef PPT_DISABLE_JOUNRALING
+    virtual void info( typename journaling::Traits<T>::NodeRef d ) const override {
+        iMutator<T>::info(d);
+        journaling::Traits<T>::template add_field<bool>( d, "isStateless", "true" );
+        journaling::Traits<T>::template add_field<bool>( d, "noResultCode", "true" );
+    }
+    # endif
 };  // StatelessMutator
 
 //
@@ -315,6 +486,9 @@ class Pipe : public std::conditional< std::is_const<T>::value
            , public std::vector<AbstractProcessor<typename std::remove_const<T>::type>*> {
 public:
     typedef typename iProcessor<T>::RefType RefType;
+    typedef typename std::conditional< std::is_const<T>::value
+                                    , iObserver<T>
+                                    , iMutator<T> >::type Parent;
 protected:
     typename Traits<T>::Routing::ResultCode _rc;
 
@@ -327,12 +501,22 @@ public:
     typename Traits<T>::Routing::ResultCode lates_result_code() const {
         return _rc; }
 
-    virtual void assign_journal( typename Traits<T>::Journal & j ) override {
+    virtual void assign_journal( typename journaling::Traits<T>::Journal & j ) override {
         AbstractProcessor<typename std::remove_const<T>::type>::assign_journal(j);
         for( auto it = this->begin(); this->end() != it; ++it ) {
             (*it)->assign_journal(j);
         }
     }
+
+    # ifndef PPT_DISABLE_JOUNRALING
+    virtual void info( typename journaling::Traits<T>::NodeRef d ) const override {
+        Parent::info(d);
+        auto procList = journaling::Traits<T>::add_list( d, "pipeline" );
+        for( auto it = this->begin(); this->end() != it; ++it ) {
+            (*it)->info( journaling::Traits<T>::new_list_node( procList, d, "processor" ) );
+        }
+    }
+    # endif
 };  // Pipe
 
 // Eval pipe with mutators

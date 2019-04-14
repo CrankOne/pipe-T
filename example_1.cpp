@@ -38,6 +38,11 @@ main(int argc, char * argv[]) {
     p.push_back( new ValueMin() );
     p.push_back( new ppt::StatelessMutator<MyMessage, int>(_simple_mutator) );
     MyMessage msgs[] = { {1}, {2} };
+
+    # ifndef PPT_DISABLE_JOUNRALING
+    ppt::journaling::Traits<MyMessage>::print_info( std::cout, p );
+    # endif
+
     std::cout << "min:" << ( p << msgs[0] << msgs[1])[0]->as<ValueMin>().get_min()
               << std::endl
               ;

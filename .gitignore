@@ -29,3 +29,4 @@ CMakeFiles
 inc/config.h
 .idea/*
 cmake-build-*/*
+rapidxml-1.13/*
