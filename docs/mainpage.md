@@ -1,130 +1,115 @@
-# Overview
 
-The main purpose of the library is to provide simple approach for organizing
-dataflow libraries inside larger APIs using generic programming framework
-(namely, C++ templates).
+# Glossary
 
-Despite one could find a lot of similar software, the pipe-T provides a few of
-unique features:
+**Message** is a base, atomic portion of information. Typical example of
+*message* is a single frame in video stream, single event in physical process,
+tomography imaging slice, etc.
 
-* It is a pure-template library that leaves the particular types and
-synchronization primitives to user-side code
-* It provides pre-define macros for SWIG offering to user easy tools for making
-wrappers onto various languages
-* Exploiting a simplistic concept, the architectural logic of pipe-T insists on
-transparent intuitive primitives used as a building blocks to become more
-user-friendly
+**Processor** is a base representation of single processing function within the
+pipeline. Each processor performs simple operation that may or may not affect
+the *message* data. Depending on the side effects caused by processor we
+distinguish the *processor* to be a *stateful* (functors) or *stateless* (that
+is supposed to be pure functions). Depending on whether the *processor*
+transforms the *message* data, we distinguish *observer*s and *mutator*s. Upon
+completion the *processor* must return a special object, the *result code*,
+which drives the *message propagation* procedure.
 
-It is not a comprehensive tool for parallel computations. pipe-T is just a
-template front-end to utilize complex things like
-[CAF](https://www.actor-framework.org/) or
-[RaftLib](https://github.com/RaftLib/RaftLib), etc. This project is a
-middleware attempt connecting these elaborated solutions and higher-leveled
-environments like Python/R/CINT.
+**Observer** does not make changes on *message* data. Typical cases of use are
+various histograms, plotters, sum accumulators, etc.
 
-## Simple Examples
+**Mutator** introduces changes on *message* data: normalization, injection of
+additional data, translation, decoding, etc.
 
-Since pipe-T was designed with usage simplicity in mind, it involves a
-significant amount of template trickery and syntax sugar offered by recent C++
-standards. We will try now to describe all the stuff in a most natural way for
-libraries like that — with examples.
+**Message propagation** procedure is an algorithm of sequential applying
+*processor*s to the single *message*. This procedure might be driven by *result
+code* objects returned by *processor*s.
 
-Despite these simplest examples are not practically useful, they demonstrates
-few basic concepts in a clearest way and may be necessary to got the idea of
-more elaborated ones.
+**Pipeline** is a chain of *processors* that have to be sequentially applied to
+*message* (*message propagation*). Each processor in a pipeline may block the
+propagation of *message* by returning specific *result code*.
 
-### Single-function Handlers
+**Spanning** is a technique of conjugating pipelines of two different types,
+where one message type (**external**) holds another (**internal**).
 
-The simplest (but unlikely useful) usage example implies constructing a
-pipeline with a single handler for arithmetic message type. Type of handler
-should be an arbitrary callable accepting mutable reference to message
-instance. For the sake of simplicity we impose an ordinary C++ function here,
-printing the integer "message":
+**Extraction** procedure is an algorithm of sequential applying the *message
+propagation* over an array of *messages*.
 
-\snippet 01-simplest/simplest.cpp Simplest handler
+# Concepts
 
-Once could further push this handler into the pipeline stack and invoke it
-against simple message like this:
+## Message Propagation and Spanning
 
-\snippet 01-simplest/simplest.cpp Simplest pipeline
+In case of propagation of single message, the envisaged procedure considers to
+major cases that may affect the strightforward logic:
 
-Sure, the equivalent functionality may be gained more easily, by just invoking
-the `my_processor()` with integer variable argument. But what is important
-here, experienced C++ coder may already notice the synctactic sugar that lies
-behind of this expressions.
+1. Message propagation may be aborted by any processor
+2. Message might be modified within one or more of the mutators
 
-Full code of this example may be found at simplest.cpp file.
+In case of abort result code returned by any processor in chain, no further
+processors will be invoked with the current message object, the result will
+be forwarded out from encompassed routine.
 
-### Pipeline Discrimination
+Mutators have to indicate whether or not the message data was modified by
+returning corresponding code. Despite the returning code type itself is defined
+via template traits specification it is assumed that:
 
-Just invoking the set of callables sequentially is usually not user wants when
-it comes to the data processing. Users usually desire to declare a special
-behaviour for some specific cases — say, message could be _discriminated_ on
-certain stage.
+1. Returned code object may be constructed from integer value `0`.
+2. `0` has to be interpreted as "modification was done" and "no abort" return
+code.
 
-By "discrimination" we imply stopping message instance to be propagated further
-in handlers chain. pipe-T's default behaviour for functions returning boolean
-values is to stop propagation when they returned `false`. For our next example
-illustrating such a processor, let's assume a bit more complicated `Message`
-type:
+To indicate that no modification was performed, the
+`Traits<Message>::Routing::mark_intact()` function is applied to `0` return
+code object.
 
-\snippet 02-discriminate/discriminate.cpp A bit more complicated message type
+This "was intact?" feature is used during the message propagation procedure
+within sub-pipelines that perform so-called (un-)packing: *spans*. Spans are
+special processor kind that encapsulates pipelines of message type different
+then that is used outside of span -- we thus call them *internal type* and
+*external type* -- and performs internal conversion.
 
-So the simplest discriminating processor that, for instance, cut away messages
-with negative `a` values:
+Typical use case of the spanning technique is when the message of external type
+carries serialized, compressed or by any mean, encoded data that have to be
+translated into sub-messages of internal type. Upon modification the user code
+may want to encode the sub-message(s) back, and *spans* are the mean to support
+this case. The practical rationale behind the spanning technique is that many
+popular data serialization formats (like google protocol buffers, ZeroMQ, etc.)
+may be naturally immersed within such a paradigm.
 
-\snippet 02-discriminate/discriminate.cpp Simple discriminating handler
+## Message Arrays Iteration -- Extraction
 
-To check whether the discrimination logic works, we will introduce a second
-type of handling routine that will simply dump the `a` member of incoming
-message to `stdout`:
+Another important use case of the pipelines is iterationg over a bulk sources
+of data, when large amount of messages has to be read sequentially and treated
+using pipeline in an independent manner with ability for any processor to
+immediately abort message iteration upon certain condition is met (e.g. message
+look-up).
 
-\snippet 02-discriminate/discriminate.cpp Dumping handler
+For this case, the `ExtractionTraits` type have to be defined describing of how
+such an iteration procedure must be performed.
 
-And run all the stuff together with:
+## Parallelism Strategies
 
-\snippet 02-discriminate/discriminate.cpp Discrimination test
+Two different techniques of parallelism may be considered in case of
+non-trivial pipelines:
 
-The full code of this example may be found at \ref discriminate.cpp file.
+1. Processing using few pipelines, each in separate execution context (thread
+or process)
+2. Processing one pipeline using parallel execution contexts (thread or
+process)
 
-### Discussion of simple examples
+First strategy requires advanced techniques of merging and/or synchronization
+for stateful processors and higly depends on user code, while second might not
+benefit at all if the pipeline itself is not uniform in sense of computational
+costs. Second strategy, however might be generalized in a well-defined manner:
+by providing each generic processor with condition variable indicating its
+availibility, one may steer the message propagation in a way that maximizes
+utilization of available CPU time.
 
-Besides of synctactic sugar allowing one to put functions with few different
-signatures into the ordered container, one could notice that there is a
-pre-defined logic hidden under the hood. Particularary, the left-shift
-operator (`>>`) getting the message instance invokes the conditional procedure
-performing the actual propagation along the pipeline.
+# Alternatives and Relative Software
 
-The most strightforward implementation involved into the demonstrated examples
-may be observed at basic_pipeline.tcc file within the pipet::Pipeline::process()
-method. Despite the apparent simplicity of the strightforward pipeline
-primitive, we had introduced a special entity to control particular execution
-loop — the special arbitering class pipet::PipelineTraits::IArbiter. The
-particular role of this class is to decide, whether to propagate message
-further, along the pipeline, or whether to continue extraction messages from
-special source class. The instances of IArbiter subclasses are not stateless,
-and making them correctly is a crucial point to build elaborated pipelines for
-practical cases.
+* Apache [RaftLib]()
+* Intel [Threading Building Blocks](http://threadingbuildingblocks.org/)
+* Boost's [Dataflow](https://web.archive.org/web/20160605053459/http://dancinghacker.com/code/dataflow/dataflow/introduction/dataflow.html) framework
 
-At the first glance, for primitive linear pipeline introduction of such a class
-looks like an overkill, but we're rarely using the pipeline primitive directly.
-Instead, few pipelines are usually organised in a forking structure that here
-is called _manifold_.
+# References
 
-## Advanced Concepts
-
-Next topics are somewhat "strong side" of pipe-T lib, demonstrating its actual
-integration capabilities.
-
-### Handler Result Conversion
-
-Pipeline has to "understand" result returned by processing function (or
-functor) in order to decide, whether message propagation shall be continued or
-aborted. Moreover, the since pipe-T provides a generic message-iteration
-mechanism, so another possibility for the handling procedures must be to
-interrupt this iteration in some cases (e.g. search or look-up iteration,
-error handling, etc).
-
-...
 
 
